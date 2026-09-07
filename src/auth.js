@@ -32,12 +32,21 @@ async function getPasswordRecord(env) {
 
 export async function isDefaultPasswordActive(env) {
   const rec = await getPasswordRecord(env);
-  return !(rec && rec.hash);
+  return !(rec && rec.hash) && !env.ADMIN_PASSWORD && (env.TEST_MODE || env.ALLOW_DEFAULT_PASSWORD === 'true');
+}
+export async function bootstrapRequired(env) {
+  return !(await getPasswordRecord(env))?.hash && !env.ADMIN_PASSWORD && !env.TEST_MODE && env.ALLOW_DEFAULT_PASSWORD !== 'true';
+}
+async function passwordHash(password, salt) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const hash = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: new TextEncoder().encode(salt), iterations: 100000, hash: 'SHA-256' }, key, 256);
+  return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 export async function setAdminPassword(env, newPassword) {
-  const hash = await sha256hex(String(newPassword));
-  await putJson(env, K_ADMIN_AUTH, { hash, updatedAt: Date.now() });
+  const salt = randomToken();
+  const hash = await passwordHash(String(newPassword), salt);
+  await putJson(env, K_ADMIN_AUTH, { hash, salt, algorithm: 'pbkdf2-sha256', iterations: 100000, updatedAt: Date.now() });
 }
 
 export async function resetAdminPassword(env) {
@@ -46,8 +55,15 @@ export async function resetAdminPassword(env) {
 
 export async function verifyAdminPassword(env, password) {
   const rec = await getPasswordRecord(env);
-  const targetHash = (rec && rec.hash) || (await sha256hex(DEFAULT_ADMIN_PASSWORD));
-  return safeEqual(await sha256hex(String(password)), targetHash);
+  if (rec?.algorithm === 'pbkdf2-sha256' && rec.salt) return safeEqual(await passwordHash(String(password), rec.salt), rec.hash);
+  if (rec?.hash) {
+    const valid = await safeEqual(await sha256hex(String(password)), rec.hash);
+    if (valid) await setAdminPassword(env, password);
+    return valid;
+  }
+  if (await bootstrapRequired(env)) return false;
+  const expected = env.ADMIN_PASSWORD || DEFAULT_ADMIN_PASSWORD;
+  return safeEqual(String(password), expected);
 }
 
 export async function createSession(env) {

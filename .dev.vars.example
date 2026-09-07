@@ -1,2 +1,12 @@
 WEBHOOK_SECRET=dev-webhook-secret
 BOT_TOKEN=
+# Local development only. Never set this flag in production.
+ALLOW_DEFAULT_PASSWORD=true
+# Production bootstrap: wrangler secret put ADMIN_PASSWORD
+# ADMIN_PASSWORD=
+# Optional production integrations (configure as secrets, not in source):
+# ZARINPAL_MERCHANT_ID=
+# MEDIA_PROCESSOR_URL=https://your-processor.example/process
+# MEDIA_PROCESSOR_SECRET=
+# PUBLIC_BASE_URL=https://your-v2-worker.workers.dev
+# ZARINPAL_SANDBOX=false

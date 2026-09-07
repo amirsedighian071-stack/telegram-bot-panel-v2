@@ -3,13 +3,14 @@ import { Hono } from 'hono';
 import {
   requireAuth, createSession, deleteSession, deleteAllSessions,
   loginAllowed, loginFailed, loginSucceeded,
-  verifyAdminPassword, setAdminPassword, isDefaultPasswordActive,
+  verifyAdminPassword, setAdminPassword, isDefaultPasswordActive, bootstrapRequired,
 } from '../auth.js';
 
 const r = new Hono();
 
 r.post('/login', async (c) => {
   const env = c.env;
+  if (await bootstrapRequired(env)) return c.json({ ok: false, error: 'admin_password_secret_required' }, 503);
 
   const ip = c.req.header('cf-connecting-ip') || 'local-dev';
   const rl = await loginAllowed(env, ip);
@@ -20,6 +21,7 @@ r.post('/login', async (c) => {
   let password = '';
   try { ({ password = '' } = await c.req.json()); } catch {   }
 
+  if (String(password).length > 256) return c.json({ ok: false, error: 'invalid_credentials' }, 401);
   const valid = await verifyAdminPassword(env, String(password));
   if (!valid) {
     await loginFailed(env, ip);
@@ -32,7 +34,7 @@ r.post('/login', async (c) => {
 });
 
 r.get('/default-status', async (c) =>
-  c.json({ ok: true, data: { defaultActive: await isDefaultPasswordActive(c.env) } })
+  c.json({ ok: true, data: { defaultActive: await isDefaultPasswordActive(c.env), setupRequired: await bootstrapRequired(c.env) } })
 );
 
 r.get('/session', requireAuth, (c) =>
@@ -50,7 +52,7 @@ r.post('/change-password', requireAuth, async (c) => {
   const currentPassword = String(body.currentPassword || '');
   const newPassword = String(body.newPassword || '');
 
-  if (newPassword.length < 6) {
+  if (newPassword.length < 10 || newPassword.length > 256) {
     return c.json({ ok: false, error: 'invalid_password' }, 400);
   }
 

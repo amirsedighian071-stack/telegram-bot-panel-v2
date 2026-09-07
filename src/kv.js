@@ -1,3 +1,4 @@
+import { mergeV2Settings } from './config.js';
 
 export const K = {
   SETTINGS: 'settings',
@@ -87,13 +88,13 @@ const deepClone = (v) => JSON.parse(JSON.stringify(v));
 export async function getSettings(env) {
   const s = (await getJson(env, K.SETTINGS, {})) || {};
   delete s.adminIds;
-  return {
+  return mergeV2Settings({
     ...DEFAULT_SETTINGS,
     ...s,
     broadcast: { ...DEFAULT_SETTINGS.broadcast, ...(s.broadcast || {}) },
     requiredChannel: { ...DEFAULT_SETTINGS.requiredChannel, ...(s.requiredChannel || {}) },
     supportButton: { ...DEFAULT_SETTINGS.supportButton, ...(s.supportButton || {}) },
-  };
+  });
 }
 
 export async function saveSettings(env, settings) {
@@ -113,6 +114,7 @@ export function withMenuDefaults(menu = {}) {
     }
   }
   return {
+    customized: menu.customized === true || Object.keys(menu).length > 0,
     welcome: {
       fa: menu?.welcome?.fa ?? DEFAULT_MENU.welcome.fa,
       en: menu?.welcome?.en ?? DEFAULT_MENU.welcome.en,
@@ -145,6 +147,7 @@ export function userMetadata(u) {
     l: String(u.lang || '').slice(0, 8),
     b: u.banned ? 1 : 0,
     x: u.blockedBot ? 1 : 0,
+    z: u.privateStarted === false ? 1 : 0,
   };
 }
 
@@ -213,7 +216,7 @@ export async function collectTargetIds(env, withinDays = 0) {
     const res = await env.BOT_KV.list({ prefix: K.USER_PREFIX, cursor, limit: 1000 });
     for (const k of res.keys) {
       const m = k.metadata || {};
-      if (m.b || m.x) continue;
+      if (m.b || m.x || m.z) continue;
       if (minLastSeen && (m.s || 0) < minLastSeen) continue;
       ids.push(k.name.slice(K.USER_PREFIX.length));
     }

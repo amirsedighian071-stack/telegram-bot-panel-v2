@@ -2,14 +2,15 @@
 import { Hono } from 'hono';
 import { requireAuth } from '../auth.js';
 import { getSettings, saveSettings } from '../kv.js';
-import { resolveToken, tgApi } from '../telegram.js';
+import { resolveToken, tgApi } from '../bot-api.js';
+import { patchV2Settings, PURPOSES, activeModules, assert } from '../config.js';
 
 const r = new Hono();
 r.use('*', requireAuth);
 
 const fail = (c, error, status = 400) => c.json({ ok: false, error }, status);
 
-function publicView(settings, envToken) {
+export function publicView(settings, envToken, env = {}) {
   const token = settings.botToken || envToken || '';
   return {
     hasToken: !!token,
@@ -20,12 +21,16 @@ function publicView(settings, envToken) {
     supportButton: settings.supportButton,
     broadcast: settings.broadcast,
     requiredChannel: settings.requiredChannel,
+    botPurpose: settings.botPurpose, customModules: settings.customModules, modules: activeModules(settings), purposes: PURPOSES,
+    botUsername: settings.botUsername, requiredChats: settings.requiredChats, uploads: settings.uploads,
+    shop: settings.shop, relay: settings.relay, loyalty: settings.loyalty,
+    integrations: { zarinpal: !!env.ZARINPAL_MERCHANT_ID, sandbox: env.ZARINPAL_SANDBOX === 'true', mediaProcessor: !!(env.MEDIA_PROCESSOR_URL && env.MEDIA_PROCESSOR_SECRET), durableStorage: !!env.BOT_STATE || !!env.__coordinated, publicBaseUrl: env.PUBLIC_BASE_URL || settings.publicBaseUrl || '' },
   };
 }
 
 r.get('/', async (c) => {
   const settings = await getSettings(c.env);
-  return c.json({ ok: true, data: { settings: publicView(settings, c.env.BOT_TOKEN) } });
+  return c.json({ ok: true, data: { settings: publicView(settings, c.env.BOT_TOKEN, c.env) } });
 });
 
 r.put('/', async (c) => {
@@ -34,6 +39,8 @@ r.put('/', async (c) => {
   const settings = await getSettings(env);
 
   if (typeof body.botToken === 'string' && body.botToken.trim()) {
+    assert(/^\d+:[A-Za-z0-9_-]+$/.test(body.botToken.trim()), 'invalid_bot_token');
+    if (settings.botToken !== body.botToken.trim()) settings.botUsername = '';
     settings.botToken = body.botToken.trim();
   }
 
@@ -57,6 +64,7 @@ r.put('/', async (c) => {
       chatId: String(rc.chatId || '').trim().slice(0, 64),
       url: /^https?:\/\//i.test(String(rc.url || '')) ? String(rc.url).trim().slice(0, 512) : '',
     };
+    settings.requiredChats = { enabled: !!rc.enabled, targets: rc.chatId ? [{ chatId: settings.requiredChannel.chatId, url: settings.requiredChannel.url, title: '', scope: 'all' }] : [] };
   }
 
   if (body.broadcast && typeof body.broadcast === 'object') {
@@ -66,8 +74,9 @@ r.put('/', async (c) => {
     if (Number.isFinite(dm)) settings.broadcast.delayMs = Math.min(Math.max(dm, 20), 500);
   }
 
+  patchV2Settings(settings, body);
   await saveSettings(env, settings);
-  return c.json({ ok: true, data: { settings: publicView(settings, env.BOT_TOKEN) } });
+  return c.json({ ok: true, data: { settings: publicView(settings, env.BOT_TOKEN, env) } });
 });
 
 r.post('/webhook', async (c) => {
@@ -87,14 +96,23 @@ r.post('/webhook', async (c) => {
     res = await tgApi(token, 'setWebhook', {
       url,
       secret_token: env.WEBHOOK_SECRET,
-      allowed_updates: ['message', 'callback_query'],
+      allowed_updates: ['message', 'edited_message', 'callback_query', 'channel_post', 'my_chat_member', 'chat_member'],
       drop_pending_updates: false,
     });
-    if (res.ok) return c.json({ ok: true, data: { url, result: res.result } });
+    if (res.ok) {
+      const settings = await getSettings(env); settings.publicBaseUrl = new URL(c.req.url).origin; await saveSettings(env, settings);
+      return c.json({ ok: true, data: { url, result: res.result } });
+    }
   }
 
   if (!res.ok) return fail(c, res.description || 'telegram_error');
   return c.json({ ok: true, data: { result: res.result } });
 });
 
+r.post('/test', async c => {
+  const token = await resolveToken(c.env); assert(token, 'token_missing');
+  const me = await tgApi(token, 'getMe'); assert(me.ok, me.description || 'telegram_connection_failed');
+  const settings = await getSettings(c.env); settings.botUsername = me.result.username || ''; await saveSettings(c.env, settings);
+  return c.json({ ok: true, data: { bot: me.result, settings: publicView(settings, c.env.BOT_TOKEN, c.env) } });
+});
 export default r;

@@ -1,22 +1,30 @@
 {
-  "name": "telegram-admin-panel",
-  "version": "1.2.0",
+  "name": "telegram-bot-panel-v2",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "پنل مدیریت دو زبانه (فا/EN) برای ربات تلگرام روی Cloudflare Workers + KV",
+  "description": "پنل چندمنظوره دو زبانه ربات تلگرام روی Cloudflare Workers و Durable Objects (SQLite)",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "npm run build && wrangler dev --ip 0.0.0.0",
+    "deploy": "npm run build && wrangler deploy",
     "tail": "wrangler tail",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "build": "node scripts/build-panel.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:ui": "node tests/browser.mjs"
   },
   "dependencies": {
-    "hono": "^4.6.14"
+    "fast-xml-parser": "^5.11.1",
+    "hono": "^4.13.7"
   },
   "devDependencies": {
-    "wrangler": "^4.0.0"
+    "@fontsource/vazirmatn": "^5.3.0",
+    "@playwright/test": "^1.63.0",
+    "lucide": "^0.468.0",
+    "tailwindcss": "^3.4.19",
+    "wrangler": "^4.129.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.16"
   }
 }

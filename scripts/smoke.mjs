@@ -1,6 +1,14 @@
 
 import worker from '../src/index.js';
 
+// Regression tests are deterministic and never contact a real Telegram bot.
+const TELEGRAM_CALLS = [];
+globalThis.fetch = async (url, options = {}) => {
+  if (!String(url).startsWith('https://api.telegram.org/')) throw new Error('Unexpected external request');
+  TELEGRAM_CALLS.push({ method: String(url).split('/').at(-1), payload: options.body ? JSON.parse(options.body) : {} });
+  return Response.json({ ok: false, error_code: 401, description: 'Unauthorized (test token)' });
+};
+
 function mockKV() {
   const store = new Map();
   return {
@@ -32,6 +40,7 @@ function mockKV() {
 
 const ENV = {
   BOT_KV: mockKV(),
+  TEST_MODE: true,
   WEBHOOK_SECRET: 'whsec-test',
   APP_VERSION: 'smoke-test',
 };
@@ -280,9 +289,10 @@ let POST_ID = '';
   ok('پست در لیست تعامل‌ها', !!post);
   POST_ID = post ? post.id : '';
 
+  let reactionUpdate = 10000;
   const react = async (uid, act) => {
     await call('POST', '/telegram/webhook', { body: {
-      update_id: 600 + uid, callback_query: {
+      update_id: reactionUpdate++, callback_query: {
         id: 'c' + uid + act, from: { id: uid, first_name: 'U' + uid },
         message: { message_id: 9, chat: { id: uid } }, data: `react:${POST_ID}:${act}`,
       },
@@ -342,7 +352,7 @@ console.log('\n── 12) قفل کانال ──');
   }, headers: { 'x-telegram-bot-api-secret-token': 'whsec-test' } });
   await new Promise((res) => setTimeout(res, 600));
   r = await json(await call('GET', '/api/users?q=888', { token: TOKEN }));
-  ok('fail-open: با خطای API عضویت، کاربر رد نشد', r.body.data.rows.length === 1);
+  ok('fail-closed: کاربر ثبت شد ولی خطای عضویت دسترسی را باز نکرد', r.body.data.rows.length === 1 && TELEGRAM_CALLS.some(c => c.method === 'sendMessage' && c.payload.chat_id === 888 && c.payload.reply_markup?.inline_keyboard?.some(row => row.some(b => b.callback_data?.startsWith('chan:check')))));
 
   await call('PUT', '/api/settings', { token: TOKEN, body: { requiredChannel: { enabled: false, chatId: '', url: '' } } });
 }
