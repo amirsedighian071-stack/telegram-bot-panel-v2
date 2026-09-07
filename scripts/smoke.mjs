@@ -79,6 +79,7 @@ console.log('\n── 1) سلامت و امنیت ──');
 
 console.log('\n── 2) ورود با رمز پیش‌فرض + محدودیت نرخ ──');
 let TOKEN = '';
+const INITIAL_PASSWORD = 'smoke-private-password-2026';
 {
   let r = await json(await call('GET', '/api/auth/default-status'));
   ok('رمز پیش‌فرض در ابتدا فعال است', r.status === 200 && r.body.data.defaultActive === true);
@@ -86,6 +87,10 @@ let TOKEN = '';
   r = await json(await call('POST', '/api/auth/login', { body: { password: 'botpanel123' } }));
   ok('ورود با رمز پیش‌فرض → توکن', r.status === 200 && !!r.body.data.token);
   TOKEN = r.body.data?.token || '';
+  ok('ورود اولیه نیازمند رمز خصوصی است', r.body.data.requiresPasswordChange === true);
+  const denied = await json(await call('GET', '/api/settings', { token: TOKEN }));
+  ok('نشست اولیه به توکن ربات دسترسی ندارد', denied.status === 403 && denied.body.error === 'password_change_required');
+  await call('POST', '/api/auth/change-password', { token: TOKEN, body: {currentPassword:'botpanel123',newPassword:INITIAL_PASSWORD} });
 
   r = await json(await call('GET', '/api/auth/session', { token: TOKEN }));
   ok('اعتبارسنجی نشست', r.status === 200 && r.body.data.valid === true);
@@ -98,7 +103,7 @@ let TOKEN = '';
   const req = new Request('https://panel.example.com/api/auth/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'cf-connecting-ip': '2.2.2.2' },
-    body: JSON.stringify({ password: 'botpanel123' }),
+    body: JSON.stringify({ password: INITIAL_PASSWORD }),
   });
   const r2 = await json(await worker.fetch(req, ENV, CTX));
   ok('ورود از IP دیگر → 200', r2.status === 200);
@@ -380,13 +385,13 @@ console.log('\n── 14) تغییر رمز عبور از پنل ──');
   let r = await json(await call('POST', '/api/auth/change-password', { token: TOKEN, body: { currentPassword: 'wrong', newPassword: 'test-new-pass-456' } }));
   ok('رمز فعلی غلط → wrong_password', r.body.error === 'wrong_password');
 
-  r = await json(await call('POST', '/api/auth/change-password', { token: TOKEN, body: { currentPassword: 'botpanel123', newPassword: 'short' } }));
+  r = await json(await call('POST', '/api/auth/change-password', { token: TOKEN, body: { currentPassword: INITIAL_PASSWORD, newPassword: 'short' } }));
   ok('رمز جدید کوتاه → invalid_password', r.body.error === 'invalid_password');
 
-  r = await json(await call('POST', '/api/auth/change-password', { token: TOKEN, body: { currentPassword: 'botpanel123', newPassword: 'test-new-pass-456' } }));
+  r = await json(await call('POST', '/api/auth/change-password', { token: TOKEN, body: { currentPassword: INITIAL_PASSWORD, newPassword: 'test-new-pass-456' } }));
   ok('تغییر رمز موفق', r.status === 200 && r.body.ok === true);
 
-  r = await json(await call('POST', '/api/auth/login', { body: { password: 'botpanel123' }, ip: '9.9.9.9' }));
+  r = await json(await call('POST', '/api/auth/login', { body: { password: INITIAL_PASSWORD }, ip: '9.9.9.9' }));
   ok('ورود با رمز قدیمی → 401', r.status === 401);
   r = await json(await call('POST', '/api/auth/login', { body: { password: 'test-new-pass-456' }, ip: '9.9.9.9' }));
   ok('ورود با رمز جدید → 200', r.status === 200);
@@ -397,9 +402,9 @@ console.log('\n── 14) تغییر رمز عبور از پنل ──');
   ok('رمز پیش‌فرض غیرفعال شد', r.body.data.defaultActive === false);
 
   r = await json(await call('POST', '/api/auth/change-password', { token: TOKEN, body: { currentPassword: 'test-new-pass-456', newPassword: 'botpanel123' } }));
-  ok('بازگشت به رمز پیش‌فرض', r.status === 200);
-  r = await json(await call('POST', '/api/auth/login', { body: { password: 'botpanel123' }, ip: '9.9.9.9' }));
-  ok('ورود دوباره با پیش‌فرض → 200', r.status === 200);
+  ok('بازگشت به رمز عمومی ممنوع است', r.status === 400 && r.body.error === 'default_password_not_allowed');
+  r = await json(await call('POST', '/api/auth/login', { body: { password: INITIAL_PASSWORD }, ip: '9.9.9.9' }));
+  ok('رمز قبلی دیگر پذیرفته نمی‌شود', r.status === 401);
 }
 
 console.log(`\n═══ نتیجه: ${passed} passed / ${failed} failed ═══\n`);

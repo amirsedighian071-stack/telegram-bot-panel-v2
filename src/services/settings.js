@@ -42,6 +42,17 @@ export const DEFAULTS = {
   topupMax: 100000000,
   topupMinutes: 30,
   usdToman: 0,
+  rates: { mode: "manual", refreshMinutes: 3, maxAgeMinutes: 10 },
+  dice: {
+    enabled: false,
+    emoji: "🎲",
+    prize: 10000,
+    intervalHours: 24,
+    newUsersOnly: true,
+    agentsAllowed: false,
+    budget: 100000,
+  },
+  dailyReport: { enabled: false, hour: 9 },
   starToman: 0,
   clientApps: [],
   wheel: { enabled: false, dailySpins: 1, fee: 0, budget: 0, prizes: [] },
@@ -58,6 +69,9 @@ export async function serviceSettings(env) {
     brand: { ...DEFAULTS.brand, ...s.brand },
     wheel: { ...DEFAULTS.wheel, ...s.wheel },
     backup: { ...DEFAULTS.backup, ...s.backup },
+    rates: { ...DEFAULTS.rates, ...s.rates },
+    dice: { ...DEFAULTS.dice, ...s.dice },
+    dailyReport: { ...DEFAULTS.dailyReport, ...s.dailyReport },
   };
 }
 export async function saveServiceSettings(env, body) {
@@ -185,6 +199,39 @@ export async function saveServiceSettings(env, body) {
       "wheel_prizes_required",
     );
   }
+  if (body.rates) {
+    const r = body.rates;
+    assert(["manual", "swapwallet"].includes(r.mode), "invalid_rate_mode");
+    s.rates = {
+      mode: r.mode,
+      refreshMinutes: integer(r.refreshMinutes || 3, 1, 60),
+      maxAgeMinutes: integer(r.maxAgeMinutes || 10, 1, 1440),
+    };
+    assert(
+      s.rates.maxAgeMinutes >= s.rates.refreshMinutes,
+      "invalid_rate_intervals",
+    );
+  }
+  if (body.dice) {
+    const d = body.dice;
+    assert(["🎲", "🎰"].includes(d.emoji), "invalid_dice_emoji");
+    s.dice = {
+      enabled: !!d.enabled,
+      emoji: d.emoji,
+      prize: integer(d.prize, 0, 10000000),
+      intervalHours: integer(d.intervalHours, 1, 168),
+      newUsersOnly: !!d.newUsersOnly,
+      agentsAllowed: !!d.agentsAllowed,
+      budget: integer(d.budget, 0, MAX_MONEY),
+    };
+  }
+  if (body.dailyReport) {
+    s.dailyReport = {
+      enabled: !!body.dailyReport.enabled,
+      hour: integer(body.dailyReport.hour, 0, 23),
+    };
+    assert(!s.dailyReport.enabled || s.reportChat, "report_chat_required");
+  }
   if (body.backup)
     s.backup = {
       enabled: !!body.backup.enabled,
@@ -210,6 +257,13 @@ export function publicSettings(s) {
     testPlanId: s.testPlanId,
     clientApps: s.clientApps,
     agentRequests: s.agentRequests,
+    dice: {
+      enabled: s.dice.enabled,
+      emoji: s.dice.emoji,
+      prize: s.dice.prize,
+      intervalHours: s.dice.intervalHours,
+      newUsersOnly: s.dice.newUsersOnly,
+    },
     wheel: {
       enabled: s.wheel.enabled,
       fee: s.wheel.fee,

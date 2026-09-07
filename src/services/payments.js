@@ -29,6 +29,7 @@ import {
   audit,
 } from "./common.js";
 import { serviceSettings } from "./settings.js";
+import { quoteRates } from "./rates.js";
 import { walletWrites } from "./wallet.js";
 import {
   CRYPTO,
@@ -40,6 +41,8 @@ import {
 
 export const GATEWAYS = {
   manual: "کارت‌به‌کارت",
+  tetrapay: "TetraPay / IRanpay 1 (FloyPay)",
+  iranpay3: "IRanpay 3 / Factor API",
   zarinpal: "زرین‌پال",
   aqaye: "آقای پرداخت",
   zarinpay: "زرین‌پی",
@@ -79,12 +82,24 @@ export async function saveGateway(env, b, old = {}) {
   };
   if (g.type === "manual")
     assert(/^\d{16}$/.test(g.cardNumber), "invalid_card_number");
-  if (g.type === "plisio") g.currency = "TRX";
+  if (["plisio", "iranpay3"].includes(g.type)) g.currency = "TRX";
+  if (g.type === "iranpay3") {
+    await tronAddress(g.address);
+    assert(
+      g.coinToman > 0 ||
+        (await serviceSettings(env)).rates.mode === "swapwallet",
+      "crypto_rate_required",
+    );
+  }
   if (g.type === "crypto") {
     assert(CRYPTO[g.currency], "unsupported_crypto");
     if (CRYPTO[g.currency].network === "TRON") await tronAddress(g.address);
     else tonAddress(g.address);
-    assert(g.coinToman > 0, "crypto_rate_required");
+    assert(
+      g.coinToman > 0 ||
+        (await serviceSettings(env)).rates.mode === "swapwallet",
+      "crypto_rate_required",
+    );
   }
   if (b.secret && Object.values(b.secret).some((v) => String(v).trim())) {
     const s = old.secret ? await unseal(env, old.secret) : {};
@@ -168,8 +183,12 @@ export async function createPayment(env, userId, b) {
     callback = `${base}/service-pay/callback/${p.id}?key=${p.nonce}`,
     resultURL = `${base}/service-pay/result/${p.id}`;
   const secret = g.secret ? await unseal(env, g.secret) : {};
+  const rates = ["nowpayments", "plisio", "crypto", "iranpay3"].includes(g.type)
+    ? await quoteRates(env, g)
+    : null;
+  if (rates) p.rateSnapshot = rates;
   if (["nowpayments", "plisio"].includes(g.type)) {
-    p.priceUSD = usdPrice(amount, s.usdToman);
+    p.priceUSD = usdPrice(amount, rates.usdToman);
     p.currency = "USD";
   }
   if (g.type === "stars") {
@@ -179,15 +198,22 @@ export async function createPayment(env, userId, b) {
     p.currency = "XTR";
     p.payload = `svc:${p.id}:${p.nonce.slice(0, 24)}`;
   }
+  if (g.type === "iranpay3") {
+    assert(rates.coinToman > 0, "crypto_rate_required");
+    p.currency = "TRX";
+    p.address = g.address;
+    p.cryptoAmount = usdPrice(amount, rates.coinToman);
+  }
   if (g.type === "crypto") {
+    assert(rates.coinToman > 0, "crypto_rate_required");
     const coin = CRYPTO[g.currency];
     p.currency = g.currency;
     p.address = g.address;
     p.cryptoAmount = decimalString(
       (BigInt(amount) * 10n ** BigInt(coin.decimals) +
-        BigInt(g.coinToman) -
+        BigInt(rates.coinToman) -
         1n) /
-        BigInt(g.coinToman),
+        BigInt(rates.coinToman),
       coin.decimals,
     );
     p.memo = p.id;
@@ -200,6 +226,42 @@ export async function createPayment(env, userId, b) {
     if (g.type === "manual") {
       p.cardNumber = g.cardNumber;
       p.cardHolder = g.cardHolder;
+    } else if (g.type === "tetrapay") {
+      const response = await apiJSON(
+        "https://tetra98.com/api/create_order",
+        "POST",
+        {
+          ApiKey: secret.apiKey || secret.merchant,
+          Hash_id: p.id,
+          Amount: String(p.amount * 10),
+          CallbackURL: callback,
+        },
+      );
+      assert(
+        response.Authority && typeof response.payment_url_bot === "string",
+        "gateway_create_failed",
+      );
+      p.remoteId = String(response.Authority);
+      p.url = response.payment_url_bot;
+    } else if (g.type === "iranpay3") {
+      const form = new FormData();
+      form.set("amount", p.cryptoAmount);
+      form.set("address", g.address);
+      form.set("base", "trx");
+      const response = expectResponse(
+        await fetchLimited("https://pay.melorinabeauty.ir/api/factor/create", {
+          method: "POST",
+          headers: { Authorization: "Token " + secret.apiKey },
+          body: form,
+        }),
+      );
+      assert(
+        response.success === true && response.data?.id,
+        "gateway_create_failed",
+      );
+      p.remoteId = String(response.data.id);
+      p.url =
+        "https://t.me/AvidTrx_Bot?start=" + encodeURIComponent(p.remoteId);
     } else if (g.type === "zarinpal") {
       const domain = g.sandbox ? "sandbox" : "payment";
       const res = await apiJSON(
@@ -357,6 +419,64 @@ export async function verifyPayment(env, p, callback = {}) {
   if (p.status === "paid") return p;
   const g = p.gatewaySnapshot,
     secret = g.secret ? await unseal(env, g.secret) : {};
+  if (p.type === "tetrapay") {
+    assert(
+      !callback.authority || constantEqual(callback.authority, p.remoteId),
+      "authority_mismatch",
+    );
+    assert(
+      !callback.hashid || callback.hashid === p.id,
+      "payment_invoice_mismatch",
+    );
+    const response = await apiJSON("https://tetra98.com/api/verify", "POST", {
+      ApiKey: secret.apiKey || secret.merchant,
+      authority: p.remoteId,
+      hashid: p.id,
+    });
+    assert(Number(response.status) === 100, "payment_not_verified");
+    if (response.authority !== undefined)
+      assert(String(response.authority) === p.remoteId, "authority_mismatch");
+    if (response.hashid !== undefined)
+      assert(String(response.hashid) === p.id, "payment_invoice_mismatch");
+    if (response.Amount !== undefined)
+      assert(
+        decimalUnits(response.Amount, 0) === BigInt(p.amount) * 10n,
+        "payment_amount_mismatch",
+      );
+    return settlePayment(env, p, "tetrapay:" + p.remoteId, "gateway_verify");
+  }
+  if (p.type === "iranpay3") {
+    const response = await apiJSON(
+      "https://pay.melorinabeauty.ir/api/factor/status?id=" +
+        encodeURIComponent(p.remoteId),
+      "GET",
+      undefined,
+      { Authorization: "Token " + secret.apiKey },
+    );
+    assert(
+      response.success === true && response.data?.status === "approved",
+      "payment_not_verified",
+    );
+    const result = response.data;
+    if (result.id !== undefined)
+      assert(String(result.id) === p.remoteId, "payment_invoice_mismatch");
+    if (result.amount !== undefined)
+      assert(
+        decimalUnits(result.amount, 6) >= decimalUnits(p.cryptoAmount, 6),
+        "payment_amount_mismatch",
+      );
+    if (result.base !== undefined)
+      assert(
+        String(result.base).toLowerCase() === "trx",
+        "payment_currency_mismatch",
+      );
+    if (result.address !== undefined)
+      assert(
+        (await tronAddress(result.address)) === (await tronAddress(p.address)),
+        "payment_recipient_mismatch",
+      );
+    return settlePayment(env, p, "iranpay3:" + p.remoteId, "gateway_verify");
+  }
   if (p.type === "zarinpal") {
     assert(
       constantEqual(callback.Authority || p.remoteId, p.remoteId),
@@ -586,7 +706,7 @@ export async function fundingTick(env) {
     .sort((a, b) => (a.lastChecked || 0) - (b.lastChecked || 0))
     .slice(0, 4)) {
     if (
-      ["plisio", "crypto"].includes(p.type) &&
+      ["plisio", "crypto", "iranpay3", "tetrapay"].includes(p.type) &&
       (p.type !== "crypto" || p.txHash)
     ) {
       try {

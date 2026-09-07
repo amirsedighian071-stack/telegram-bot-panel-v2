@@ -1,8 +1,8 @@
 WEBHOOK_SECRET=dev-webhook-secret
 BOT_TOKEN=
-# Local development only. Never set this flag in production.
-ALLOW_DEFAULT_PASSWORD=true
-# Production bootstrap: wrangler secret put ADMIN_PASSWORD
+# Initial login works with botpanel123 without ADMIN_PASSWORD.
+# Set your private password in the first-login panel form.
+# Optional override for an installation that prefers an environment password:
 # ADMIN_PASSWORD=
 # Optional production integrations (configure as secrets, not in source):
 # ZARINPAL_MERCHANT_ID=

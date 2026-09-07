@@ -31,7 +31,7 @@
       chHint: '⚠️ ربات باید ادمین کانال باشد تا عضویت را تشخیص دهد.',
       signIn: 'ورود', signingIn: 'در حال ورود…', loginErr: 'رمز عبور نادرست است',
       rateLimited: 'تلاش‌های زیاد؛ چند دقیقه بعد دوباره امتحان کنید', fillPassword: 'رمز عبور را وارد کنید',
-      defPwHint: 'رمز پیش‌فرض اولیه: <b>botpanel123</b> — بعد از ورود از «تنظیمات ← امنیت و رمز عبور» تغییرش دهید',
+      defPwHint: 'رمز ورود اولیه: <b>botpanel123</b> — بدون نیاز به متغیر؛ در اولین ورود، رمز خصوصی خود را داخل پنل تعیین کنید.',
       security: 'امنیت و رمز عبور', currentPw: 'رمز فعلی', newPw: 'رمز جدید', newPw2: 'تکرار رمز جدید',
       changePw: 'تغییر رمز عبور', pwChanged: 'رمز عبور تغییر کرد ✓', pwMinLen: 'رمز جدید باید حداقل ۶ کاراکتر باشد',
       pwNoMatch: 'رمزهای جدید یکسان نیستند', wrongPw: 'رمز فعلی نادرست است',
@@ -117,7 +117,7 @@
       chHint: '⚠️ The bot must be an admin of the channel to detect membership.',
       signIn: 'Sign in', signingIn: 'Signing in…', loginErr: 'Incorrect password',
       rateLimited: 'Too many attempts; try again in a few minutes', fillPassword: 'Please enter the password',
-      defPwHint: 'Initial default password: <b>botpanel123</b> — change it after login from “Settings ← Security & password”',
+      defPwHint: 'Initial password: <b>botpanel123</b> — no environment variable required. Set your private password on first login.',
       security: 'Security & password', currentPw: 'Current password', newPw: 'New password', newPw2: 'Repeat new password',
       changePw: 'Change password', pwChanged: 'Password changed ✓', pwMinLen: 'New password must be at least 6 characters',
       pwNoMatch: 'New passwords do not match', wrongPw: 'Current password is incorrect',
@@ -343,6 +343,7 @@
       if (S.token) { localStorage.removeItem('bp_token'); S.token = ''; render(); }
       throw new Error(t('relogin'));
     }
+    if (d.error === 'password_change_required') { S.mustChangePassword = true; render(); }
     if (!res.ok || d.ok === false) throw new Error(d.error || ('HTTP ' + res.status));
     return d.data;
   }
@@ -477,9 +478,6 @@
     $('pw').focus();
     _crR(document.querySelector('#app .max-w-sm') || undefined);
     fetch('/api/auth/default-status').then((x) => x.json()).then((j) => {
-      if (j && j.ok && j.data.setupRequired) {
-        const h = $('def-pw-hint'); if (h) { h.textContent = S.lang === 'fa' ? 'برای راه‌اندازی اولیه: secret با نام ADMIN_PASSWORD را در Cloudflare ثبت کنید. در محیط واقعی رمز عمومی پیش‌فرض پذیرفته نمی‌شود.' : 'Initial setup: configure the ADMIN_PASSWORD secret in Cloudflare. Public default passwords are not accepted in production.'; h.classList.remove('hidden'); }
-      }
       if (j && j.ok && j.data.defaultActive) {
         const h = $('def-pw-hint');
         if (h) { h.innerHTML = '🔑 ' + t('defPwHint'); h.classList.remove('hidden'); }
@@ -507,11 +505,13 @@
       })();
       S.token = d.token;
       localStorage.setItem('bp_token', d.token);
+      S.mustChangePassword = !!d.requiresPasswordChange;
+      if (S.mustChangePassword) { render(); return; }
       toast(t('signIn') + ' ✓', 'success');
       await initV2();
       render();
     } catch (e) {
-      err.textContent = e.message === 'invalid_credentials' ? t('loginErr') : e.message === 'rate_limited' ? t('rateLimited') : e.message === 'admin_password_secret_required' ? (S.lang === 'fa' ? 'ابتدا secret با نام ADMIN_PASSWORD را در Cloudflare تنظیم کنید. رمز پیش‌فرض در محیط واقعی غیرفعال است.' : 'Configure the ADMIN_PASSWORD Cloudflare secret first. Default passwords are disabled in production.') : e.message;
+      err.textContent = e.message === 'invalid_credentials' ? t('loginErr') : e.message === 'rate_limited' ? t('rateLimited') : e.message === 'admin_password_secret_required' ? (S.lang === 'fa' ? 'نسخه سرور قدیمی است؛ نسخه جدید ورود اولیه بدون متغیر را پشتیبانی می‌کند.' : 'The server is outdated; the new version supports initial login without environment variables.') : e.message;
       err.classList.remove('hidden');
       btn.disabled = false;
       btn.innerHTML = '<i data-lucide="log-in" class="w-4 h-4"></i>' + t('signIn');
@@ -2003,6 +2003,7 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { ddClose(); return; }
     if (e.key !== 'Enter') return;
+    if (e.target.id === 'setup-new' || e.target.id === 'setup-repeat') { e.preventDefault(); ACTIONS.finishPasswordSetup(); return; }
     if (e.target.id === 'pw') { e.preventDefault(); doLogin(); }
     else if (e.target.id === 'user-q') { e.preventDefault(); loadUsers(true); }
   });
@@ -2024,7 +2025,26 @@
     const routeChanged = route !== S.route;
     S.route = typeof visibleRoute === 'function' && !visibleRoute(route) ? 'dashboard' : route;
     if (!S.token) { renderLogin(); return; }
+    if (S.mustChangePassword) { renderPasswordSetup(); return; }
     renderShell();
     if (routeChanged) window.scrollTo({ top: 0, behavior: 'smooth' });
   }
   window.addEventListener('hashchange', render);
+
+function renderPasswordSetup() {
+  const en=S.lang==='en';
+  $('app').innerHTML='<main class="min-h-screen flex items-center justify-center p-5"><section class="'+CLS.card+' w-full max-w-md p-7 animate-fadeIn"><div class="v-icon mb-4"><i data-lucide="shield-check"></i></div><h1 class="font-extrabold text-xl mb-3">'+(en?'Set your private password':'رمز خصوصی پنل را تعیین کنید')+'</h1><p class="text-sm text-slate-400 leading-7 mb-5">'+(en?'Initial login succeeded. For security, choose a private password before accessing bot tokens or financial data. No Cloudflare variable is needed.':'ورود با رمز اولیه انجام شد. برای محافظت از توکن‌ها و اطلاعات مالی، پیش از ورود به بخش‌های پنل یک رمز خصوصی تعیین کنید؛ نیازی به متغیر Cloudflare نیست.')+'</p><label class="'+CLS.label+'" for="setup-new">'+(en?'New password (at least 10 characters)':'رمز جدید (حداقل ۱۰ کاراکتر)')+'</label><input id="setup-new" type="password" autocomplete="new-password" minlength="10" class="'+CLS.input+'"><label class="'+CLS.label+' mt-4" for="setup-repeat">'+(en?'Repeat new password':'تکرار رمز جدید')+'</label><input id="setup-repeat" type="password" autocomplete="new-password" class="'+CLS.input+'"><p id="setup-error" role="alert" class="text-sm text-rose-400 mt-3"></p><button type="button" id="setup-submit" data-act="finishPasswordSetup" class="'+CLS.btnP+' w-full mt-5">'+(en?'Save password & open panel':'ذخیره رمز و ورود به پنل')+'</button><button data-act="setupLogout" class="'+CLS.btnS+' w-full mt-3">'+(en?'Sign out':'خروج')+'</button><p class="text-xs text-slate-400 leading-6 mt-5">'+(en?'Your previous custom password, if configured, is preserved. The public initial password cannot be retained.':'اگر قبلاً رمز اختصاصی ثبت کرده‌اید، همان حفظ می‌شود. نگه‌داشتن رمز عمومی اولیه مجاز نیست.')+'</p></section></main>';
+  refreshIcons();$('setup-new').focus();
+}
+ACTIONS.finishPasswordSetup = async () => {
+  const password=$('setup-new')?.value||'', repeat=$('setup-repeat')?.value||'';
+  const fail=message=>{if($('setup-error'))$('setup-error').textContent=message;};
+  if(password.length<10)return fail(S.lang==='en'?'Use at least 10 characters.':'رمز باید حداقل ۱۰ کاراکتر باشد.');
+  if(password!==repeat)return fail(S.lang==='en'?'Passwords do not match.':'تکرار رمز مطابقت ندارد.');
+  if(password==='botpanel123')return fail(S.lang==='en'?'Choose a different, private password.':'یک رمز خصوصی متفاوت انتخاب کنید.');
+  const button=$('setup-submit');if(!button||button.disabled)return;button.disabled=true;
+  try { await api('/auth/change-password',{method:'POST',body:{currentPassword:'botpanel123',newPassword:password}});S.mustChangePassword=false;await initV2();render(); }
+  catch(e){fail(typeof vError==='function'?vError(e.message):e.message);}
+  finally {if(button.isConnected)button.disabled=false;}
+};
+ACTIONS.setupLogout=async()=>{await api('/auth/logout',{method:'POST'}).catch(()=>{});S.token='';S.mustChangePassword=false;localStorage.removeItem('bp_token');render();};

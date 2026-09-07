@@ -81,6 +81,31 @@ const chip = (s) =>
   `<span class="chip ${["active", "paid", "done"].includes(s) ? "good" : ["pending", "review", "receipt_review", "queued", "on_hold", "sending"].includes(s) ? "warn" : ["failed", "rejected"].includes(s) ? "bad" : ""}">${status(s)}</span>`;
 function errorText(code) {
   const dict = {
+    dice_disabled: T("تاس فعال نیست.", "Dice is disabled."),
+    dice_cooldown: T(
+      "هنوز زمان نوبت بعدی نرسیده است.",
+      "Your next attempt is not available yet.",
+    ),
+    dice_new_users_only: T(
+      "این هدیه فقط برای کاربران بدون خرید قبلی است.",
+      "This promotion is only for customers with no prior purchases.",
+    ),
+    dice_budget_exhausted: T(
+      "بودجه جایزه امروز تمام شده است.",
+      "Today’s prize budget is exhausted.",
+    ),
+    dice_role_not_allowed: T(
+      "این بازی برای نوع حساب شما فعال نیست.",
+      "This promotion is unavailable for your account role.",
+    ),
+    market_rates_unavailable: T(
+      "نرخ معتبر در دسترس نیست؛ بعداً دوباره تلاش کنید.",
+      "A valid rate is unavailable. Try again later.",
+    ),
+    market_rates_stale: T(
+      "نرخ قبلی منقضی است؛ فاکتور با نرخ قدیمی صادر نمی‌شود.",
+      "The previous quote expired; no stale invoice will be issued.",
+    ),
     customer_unauthorized: T(
       "ورود منقضی شده؛ مینی‌اپ را دوباره از ربات باز کنید.",
       "Session expired. Reopen the Mini App from the bot.",
@@ -487,7 +512,7 @@ async function paymentHTML(id) {
 }
 async function rewardsPage() {
   const r = await api("/raffles");
-  return `<section class="hero"><div class="eyebrow">MEMBER REWARDS</div><h2>${T("هدیه برای همراهی شما", "Rewards for being here")}</h2><p>${T("هدیه‌ها به اعتبار قابل استفاده در فروشگاه اضافه می‌شوند.", "Rewards add credit usable in this service store.")}</p></section><div class="section-head"><h2>${T("کد هدیه", "Gift code")}</h2></div><section class="card"><p class="muted small">${T("کد هدیه دارید؟ آن را در کیف پول فعال کنید.", "Have a gift code? Redeem it for wallet credit.")}</p><div class="actions">${button(T("ثبت کد هدیه", "Redeem code"), "gift", "", "primary")}</div></section>${P.data.settings.wheel.enabled ? `<div class="section-head"><h2>${T("گردونه", "Reward wheel")}</h2></div><section class="card"><div class="prize-ring" id="prize-ring">✦</div><p class="between small"><span>${T("هزینه هر چرخش", "Cost per spin")}: ${money(P.data.settings.wheel.fee)}</span><span>${P.data.settings.wheel.dailySpins} ${T("بار در روز", "per day")}</span></p><div class="actions">${button(T("مشاهده و تأیید چرخش", "Review & confirm spin"), "wheelConfirm", "", "primary")}</div></section>` : ""}<div class="section-head"><h2>${T("قرعه‌کشی‌های رایگان", "Free raffles")}</h2></div>${r.rows.map((r) => `<section class="card"><div class="between"><b>${esc(r.title)}</b><span class="chip">${r.status === "drawn" ? T("انجام شده", "Drawn") : T("باز", "Open")}</span></div><p class="hint">${date(r.closesAt)} · ${num(r.entriesCount)} ${T("شرکت‌کننده", "entries")}</p><p class="small">${T("جوایز", "Prizes")}: ${r.prizes.map(money).join(" / ")}</p>${r.status === "open" ? `<div class="actions">${r.joined ? '<span class="chip good">' + T("شما ثبت‌نام کرده‌اید", "You joined") + "</span>" : button(T("شرکت رایگان", "Join for free"), "raffle", `data-id="${r.id}"`, "primary")}</div>` : `<p class="hint">${r.winners.some((w) => w.userId === String(P.data.user.id)) ? T("🎉 شما برنده شده‌اید؛ اعتبار در کیف پول ثبت شد.", "🎉 You won! Credit was added to your wallet.") : T("نتیجه ثبت شد و اعتبار برندگان واریز شده است.", "Results recorded; winners received wallet credit.")}</p>`}</section>`).join("") || empty(T("قرعه‌کشی فعالی وجود ندارد.", "No raffles are available."))}`;
+  return `<section class="hero"><div class="eyebrow">MEMBER REWARDS</div><h2>${T("هدیه برای همراهی شما", "Rewards for being here")}</h2><p>${T("هدیه‌ها به اعتبار قابل استفاده در فروشگاه اضافه می‌شوند.", "Rewards add credit usable in this service store.")}</p></section><div class="section-head"><h2>${T("کد هدیه", "Gift code")}</h2></div><section class="card"><p class="muted small">${T("کد هدیه دارید؟ آن را در کیف پول فعال کنید.", "Have a gift code? Redeem it for wallet credit.")}</p><div class="actions">${button(T("ثبت کد هدیه", "Redeem code"), "gift", "", "primary")}</div></section>${portalDiceCard()}${P.data.settings.wheel.enabled ? `<div class="section-head"><h2>${T("گردونه", "Reward wheel")}</h2></div><section class="card"><div class="prize-ring" id="prize-ring">✦</div><p class="between small"><span>${T("هزینه هر چرخش", "Cost per spin")}: ${money(P.data.settings.wheel.fee)}</span><span>${P.data.settings.wheel.dailySpins} ${T("بار در روز", "per day")}</span></p><div class="actions">${button(T("مشاهده و تأیید چرخش", "Review & confirm spin"), "wheelConfirm", "", "primary")}</div></section>` : ""}<div class="section-head"><h2>${T("قرعه‌کشی‌های رایگان", "Free raffles")}</h2></div>${r.rows.map((r) => `<section class="card"><div class="between"><b>${esc(r.title)}</b><span class="chip">${r.status === "drawn" ? T("انجام شده", "Drawn") : T("باز", "Open")}</span></div><p class="hint">${date(r.closesAt)} · ${num(r.entriesCount)} ${T("شرکت‌کننده", "entries")}</p><p class="small">${T("جوایز", "Prizes")}: ${r.prizes.map(money).join(" / ")}</p>${r.status === "open" ? `<div class="actions">${r.joined ? '<span class="chip good">' + T("شما ثبت‌نام کرده‌اید", "You joined") + "</span>" : button(T("شرکت رایگان", "Join for free"), "raffle", `data-id="${r.id}"`, "primary")}</div>` : `<p class="hint">${r.winners.some((w) => w.userId === String(P.data.user.id)) ? T("🎉 شما برنده شده‌اید؛ اعتبار در کیف پول ثبت شد.", "🎉 You won! Credit was added to your wallet.") : T("نتیجه ثبت شد و اعتبار برندگان واریز شده است.", "Results recorded; winners received wallet credit.")}</p>`}</section>`).join("") || empty(T("قرعه‌کشی فعالی وجود ندارد.", "No raffles are available."))}`;
 }
 async function helpPage() {
   return `<section class="hero"><div class="eyebrow">HELP & SUPPORT</div><h2>${T("کنار شما هستیم", "We are here to help")}</h2><p>${T("راهنما، کلاینت‌ها و پشتیبانی خدمات", "Guides, client apps and service support")}</p><div class="actions" style="margin-top:18px">${button(T("💬 پشتیبانی ربات", "💬 Bot support"), "support", "", "primary")}${button(T("🤝 درخواست نمایندگی", "🤝 Reseller request"), "agent")}</div></section><div class="section-head"><h2>${T("کلاینت‌ها و راهنما", "Client apps & guides")}</h2></div>${P.data.settings.clientApps.map((a) => `<section class="card"><div class="between"><b>${esc(a.title)}</b><span class="chip">${esc(a.os)}</span></div><p class="hint">${esc(a.help)}</p><div class="actions"><a class="btn" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${T("دریافت برنامه", "Get app")} ↗</a></div></section>`).join("") || empty(T("مدیر هنوز راهنمای کلاینت اضافه نکرده است.", "No client guides have been added."))}<div class="divider"></div><section class="card"><h3>${T("حساب شما", "Your account")}</h3><p class="hint">${esc(P.data.user.name)} · ${esc(P.data.user.id)}</p><div class="actions">${button(T("خروج از نشست", "Sign out"), "logout", "", "danger")}</div></section>`;
@@ -1037,4 +1062,58 @@ actions.rotateCombined = async () => {
     body: { rotate: true },
   });
   await actions.combined();
+};
+
+function portalDiceCard() {
+  const d = P.data?.settings.dice;
+  if (!d?.enabled) return "";
+  return (
+    '<div class="section-head"><h2>' +
+    T("تاس رایگان تلگرام", "Free Telegram dice") +
+    '</h2></div><section class="card"><div class="prize-ring">' +
+    d.emoji +
+    '</div><p class="small">' +
+    T("اعتبار جایزه: ", "Prize credit: ") +
+    money(d.prize) +
+    '</p><p class="hint">' +
+    T(
+      "هر " +
+        d.intervalHours +
+        " ساعت یک نوبت. نتیجه فقط از تلگرام دریافت می‌شود.",
+      "One attempt every " +
+        d.intervalHours +
+        " hours. Results come from Telegram.",
+    ) +
+    '</p><div class="actions">' +
+    button(
+      T("دریافت نتیجه در ربات", "Roll in Telegram"),
+      "playDice",
+      "",
+      "primary",
+    ) +
+    "</div></section>"
+  );
+}
+actions.playDice = async () => {
+  const d = await api("/dice", {
+    method: "POST",
+    body: { requestId: crypto.randomUUID() },
+  });
+  if (d.game.status === "done")
+    toast(
+      d.game.won
+        ? T(
+            "برنده شدید؛ اعتبار به کیف پول اضافه شد.",
+            "You won; wallet credited.",
+          )
+        : T("این نوبت برنده نشدید.", "No prize this time."),
+    );
+  else
+    toast(
+      T(
+        "نتیجه تأیید نشد؛ ربات را شروع کنید و وضعیت را بررسی کنید.",
+        "Result unconfirmed. Start the bot and check its status.",
+      ),
+      true,
+    );
 };

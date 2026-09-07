@@ -46,7 +46,8 @@ export async function setup() {
     const form=body instanceof FormData;if(!form)h['content-type']='application/json';
     return worker.fetch(new Request('https://panel.example.com'+path,{method,headers:h,body:body===undefined?undefined:form?body:JSON.stringify(body)}),env,ctx);
   };
-  const login=await raw('POST','/api/auth/login',{body:{password:'botpanel123'}}), token=(await login.json()).data.token;
+  const login=await raw('POST','/api/auth/login',{body:{password:'botpanel123'}}), loginData=(await login.json()).data, token=loginData.token;
+  if(loginData.requiresPasswordChange){const changed=await raw('POST','/api/auth/change-password',{token,body:{currentPassword:'botpanel123',newPassword:'unit-test-private-password'}});if(!changed.ok)throw new Error('Test password setup failed');}
   const api=async(method,path,body)=>{const r=await raw(method,'/api'+path,{body,token});return {status:r.status,...await r.json()};};
   const update=async(data,uid)=>{const r=await raw('POST','/telegram/webhook',{body:{update_id:uid??updateId++,...data},headers:{'x-telegram-bot-api-secret-token':env.WEBHOOK_SECRET}});if(r.status!==200)throw new Error('Webhook status '+r.status);return r.json();};
   const msg=(user,text,extra={})=>update({message:{message_id:updateId,from:{id:user,first_name:'User '+user},chat:{id:user,type:'private'},...(text===undefined?{}:{text}),...extra}});

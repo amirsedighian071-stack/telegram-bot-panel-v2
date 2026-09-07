@@ -25,6 +25,8 @@ const MODULE_LABELS = { catalog: ['محصولات و فایل‌ها','Catalog']
 const vModuleName = key => MODULE_LABELS[key]?.[S.lang === 'en' ? 1 : 0] || key;
 function vError(code) {
   const messages = {
+    password_change_required: ['ابتدا رمز خصوصی پنل را تعیین کنید.', 'Set your private panel password first.'],
+    default_password_not_allowed: ['رمز عمومی اولیه را نمی‌توان به عنوان رمز خصوصی ذخیره کرد.', 'The public initial password cannot be your private password.'],
     request_too_large: ['حجم درخواست بیش از حد مجاز است.', 'The request exceeds the size limit.'],
     legacy_job_imported_paused_review_before_resume: ['ارسال ناتمام نسخه قبلی، برای جلوگیری از ارسال دوباره متوقف وارد شده است؛ قبل از ادامه مقصدها را بررسی کنید.', 'An unfinished legacy broadcast was imported paused. Inspect its recipients before resuming.'],
     upload_chat_required: ['ابتدا در تنظیمات ← فایل و رسانه، آیدی چت ذخیره‌سازی را ثبت کنید و ربات را ادمین آن کنید.', 'Configure a storage chat in Settings → Media first and make the bot an administrator.'],

@@ -1,3 +1,4 @@
+import { serviceEngagementTick } from "./services/engagement.js";
 import managedRoutes, { managedPublic, TENANT_KEY } from './services/managed-bots.js';
 import { unseal as unsealManaged } from './services/common.js';
 import serviceRoutes, { portal } from './services/routes.js';
@@ -50,7 +51,7 @@ export async function runScheduled(env) {
   const errors = [];
   await putJson(env, 'v2:runtime:cron', { at, status: 'running' });
   // Each subsystem records its own delivery results; one failure must not stop the others.
-  for (const [name, fn] of Object.entries({ orders: expireOrders, groups: groupTick, broadcasts: broadcastTick, feeds: feedTick, relay: relayTick, services: serviceTick, funding: fundingTick, backups: backupTick })) {
+  for (const [name, fn] of Object.entries({ orders: expireOrders, groups: groupTick, broadcasts: broadcastTick, feeds: feedTick, relay: relayTick, services: serviceTick, funding: fundingTick, backups: backupTick, servicesExtra: serviceEngagementTick })) {
     try { await fn(env); } catch (e) { errors.push({ name, error: String(e.message).slice(0, 160) }); }
   }
   await putJson(env, 'v2:runtime:cron', { at, finishedAt: Date.now(), status: errors.length ? 'partial' : 'ok', errors });

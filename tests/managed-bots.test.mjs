@@ -89,6 +89,7 @@ beforeEach(async () => {
     false,
   );
   token = r.body.data.token;
+  await call("POST", "/api/auth/change-password", {currentPassword:"botpanel123",newPassword:"managed-test-private-password"});
 });
 afterEach(() => {
   globalThis.fetch = realFetch;

@@ -59,6 +59,30 @@ const svJSON = (id) => {
 const svOldError = vError;
 vError = (code) => {
   const map = {
+    market_rates_unavailable: L(
+      "منبع نرخ ارز در دسترس نیست؛ بعداً دوباره تلاش کنید.",
+      "Market rates are unavailable. Try again later.",
+    ),
+    market_rates_stale: L(
+      "نرخ ذخیره‌شده منقضی است؛ فاکتور جدید با نرخ قدیمی ساخته نمی‌شود.",
+      "Stored rates expired; a stale quote will not be used.",
+    ),
+    market_response_invalid: L(
+      "پاسخ منبع نرخ معتبر نیست.",
+      "Invalid rate-provider response.",
+    ),
+    market_pair_missing: L(
+      "نرخ یکی از جفت‌های لازم در پاسخ منبع نیست.",
+      "A required market pair is missing.",
+    ),
+    report_chat_required: L(
+      "ابتدا چت گزارش مدیر را تنظیم کنید.",
+      "Configure the administrator report chat first.",
+    ),
+    invalid_rate_intervals: L(
+      "حداکثر عمر نرخ باید کمتر از فاصله بررسی نباشد.",
+      "Maximum quote age must be at least the refresh interval.",
+    ),
     vault_key_required: L(
       "ابتدا secret با نام VAULT_KEY را در Cloudflare تنظیم کنید (حداقل ۳۲ کاراکتر). اطلاعات اتصال رمزگذاری می‌شوند.",
       "Configure a VAULT_KEY secret in Cloudflare (at least 32 characters) to encrypt credentials.",
@@ -920,7 +944,7 @@ async function svPayments() {
   SV.cache.gateways = gateways.rows;
   SV.cache.payments = payments.rows;
   return svRows(
-    `${vSection(L("روش‌های پرداخت", "Payment methods"), gateways.rows.length ? gateways.rows.map((g) => `<div class="v-row"><div class="v-row-main"><p class="text-sm font-semibold">${esc(g.title)} ${svBadge(g.enabled ? "active" : "disabled")}</p><p class="v-meta">${esc(g.type)} · ${L("کش‌بک", "Cashback")}: ${g.cashback}% ${g.sandbox ? " · SANDBOX" : ""}</p></div><div class="v-actions">${svBtn(t("edit"), "svGatewayEdit", `data-id="${g.id}"`)}${svBtn(L("غیرفعال", "Disable"), "svDisable", `data-kind="gateways" data-id="${g.id}"`)}</div></div>`).join("") : vEmpty(L("روش پرداخت را اضافه کنید. بدون تنظیم حساب واقعی، اتصال زنده تأیید نشده است.", "Add a payment method. Live operation requires your provider account."), "credit-card"), svBtn(L("درگاه جدید", "Add gateway"), "svGatewayEdit", "", true))}${vSection(L("فاکتورهای شارژ کیف پول", "Wallet funding invoices"), payments.rows.length ? payments.rows.map((p) => `<div class="v-row"><div class="v-row-main"><p class="text-sm font-semibold">${esc(p.userId)} · ${vMoney(p.amount)} ${svBadge(p.status)}</p><p class="v-meta">${esc(p.type)} · ${fmtDate(p.createdAt)}<br><span class="v-code">${p.id}</span>${p.lastError || p.error ? "<br>" + esc(vError(p.lastError || p.error)) : ""}</p></div><div class="v-actions">${p.hasReceipt ? svBtn(L("فیش", "Receipt"), "svReceipt", `data-id="${p.id}"`) : ""}${p.status === "receipt_review" ? svBtn(L("بررسی فیش", "Review"), "svPaymentReview", `data-id="${p.id}"`) : ""}${!["paid", "rejected"].includes(p.status) && !["manual", "stars"].includes(p.type) ? svBtn(L("استعلام", "Verify"), "svVerifyPayment", `data-id="${p.id}"`) : ""}</div></div>`).join("") + svPaginator(payments) : vEmpty(L("فاکتوری ثبت نشده است.", "No funding invoices yet.")))}${vNote(L("رسید کارت‌به‌کارت نیازمند بررسی واقعی مدیر است؛ تصویر یا Status=OK به‌تنهایی تأیید پرداخت نیست. درگاه‌ها و زنجیره‌ها با استعلام سمت سرور بررسی می‌شوند. Stars فقط از successful_payment معتبر تلگرام پذیرفته می‌شود.", "Bank receipts need real administrator review. Images or Status=OK are not payment proof. Gateways/blockchains are checked server-side; Stars use verified Telegram successful_payment events."), true)}`,
+    `${vSection(L("روش‌های پرداخت", "Payment methods"), gateways.rows.length ? gateways.rows.map((g) => `<div class="v-row"><div class="v-row-main"><p class="text-sm font-semibold">${esc(g.title)} ${svBadge(g.enabled ? "active" : "disabled")}</p><p class="v-meta">${esc(g.type)} · ${L("کش‌بک", "Cashback")}: ${g.cashback}% ${g.sandbox ? " · SANDBOX" : ""}</p></div><div class="v-actions">${svBtn(t("edit"), "svGatewayEdit", `data-id="${g.id}"`)}${svBtn(L("غیرفعال", "Disable"), "svDisable", `data-kind="gateways" data-id="${g.id}"`)}</div></div>`).join("") : vEmpty(L("روش پرداخت را اضافه کنید. بدون تنظیم حساب واقعی، اتصال زنده تأیید نشده است.", "Add a payment method. Live operation requires your provider account."), "credit-card"), svBtn(L("درگاه جدید", "Add gateway"), "svGatewayEdit", "", true))}${vSection(L("فاکتورهای شارژ کیف پول", "Wallet funding invoices"), payments.rows.length ? payments.rows.map((p) => `<div class="v-row"><div class="v-row-main"><p class="text-sm font-semibold">${esc(p.userId)} · ${vMoney(p.amount)} ${svBadge(p.status)}</p><p class="v-meta">${esc(p.type)} · ${fmtDate(p.createdAt)}<br><span class="v-code">${p.id}</span>${p.lastError || p.error ? "<br>" + esc(vError(p.lastError || p.error)) : ""}</p></div><div class="v-actions">${p.hasReceipt ? svBtn(L("فیش", "Receipt"), "svReceipt", `data-id="${p.id}"`) : ""}${p.status === "receipt_review" ? svBtn(L("بررسی فیش", "Review"), "svPaymentReview", `data-id="${p.id}"`) : ""}${!["paid", "rejected"].includes(p.status) && !["manual", "stars"].includes(p.type) ? svBtn(L("استعلام", "Verify"), "svVerifyPayment", `data-id="${p.id}"`) : ""}</div></div>`).join("") + svPaginator(payments) : vEmpty(L("فاکتوری ثبت نشده است.", "No funding invoices yet.")))}${vNote(L("رسید کارت‌به‌کارت نیازمند بررسی واقعی مدیر است؛ تصویر یا Status=OK به‌تنهایی تأیید پرداخت نیست. درگاه‌های TetraPay و Factor نیز مانند سایر درگاه‌ها با استعلام سمت سرور بررسی می‌شوند. Stars فقط از successful_payment معتبر تلگرام پذیرفته می‌شود.", "Bank receipts need real administrator review. Images or Status=OK are not payment proof. Gateways/blockchains are checked server-side; Stars use verified Telegram successful_payment events."), true)}`,
   );
 }
 ACTIONS.svGatewayEdit = (d) => {
@@ -934,7 +958,7 @@ ACTIONS.svGatewayEdit = (d) => {
   SV.edit = { id: g.id || "" };
   vModal(
     L("روش پرداخت", "Payment method"),
-    `${vField("sg-title", L("عنوان نمایشی", "Display title"), g.title, "required")}${vSelect("sg-type", L("نوع درگاه", "Gateway type"), Object.entries(SV.meta.gateways), g.type)}${vCheck("sg-enabled", L("فعال باشد", "Enabled"), g.enabled)}<div class="grid sm:grid-cols-2 gap-4">${vField("sg-cashback", L("کش‌بک درصدی", "Cashback (%)"), g.cashback, 'type="number" min="0" max="100"')}${vField("sg-merchant", L("مرچنت؛ خالی حفظ قبلی", "Merchant ID; blank keeps existing"), "", 'type="password" autocomplete="new-password" dir="ltr"')}${vField("sg-api", L("API Key؛ خالی حفظ قبلی", "API key; blank keeps existing"), "", 'type="password" autocomplete="new-password" dir="ltr"')}${vField("sg-ipn", "NOWPayments IPN Secret", "", 'type="password" autocomplete="new-password" dir="ltr"')}</div><div class="v-divider"></div><h4 class="text-sm font-bold">${L("کارت‌به‌کارت", "Bank transfer")}</h4><div class="grid sm:grid-cols-2 gap-4">${vField("sg-card", L("شماره کارت", "Card number"), g.cardNumber, 'dir="ltr" inputmode="numeric"')}${vField("sg-holder", L("صاحب کارت", "Card holder"), g.cardHolder)}</div><div class="v-divider"></div><h4 class="text-sm font-bold">${L("رمزارز مستقیم و Plisio", "Direct cryptocurrency / Plisio")}</h4>${vSelect(
+    `${vField("sg-title", L("عنوان نمایشی", "Display title"), g.title, "required")}${vSelect("sg-type", L("نوع درگاه", "Gateway type"), Object.entries(SV.meta.gateways), g.type)}${vCheck("sg-enabled", L("فعال باشد", "Enabled"), g.enabled)}<div class="grid sm:grid-cols-2 gap-4">${vField("sg-cashback", L("کش‌بک درصدی", "Cashback (%)"), g.cashback, 'type="number" min="0" max="100"')}${vField("sg-merchant", L("مرچنت؛ خالی حفظ قبلی", "Merchant ID; blank keeps existing"), "", 'type="password" autocomplete="new-password" dir="ltr"')}${vField("sg-api", L("API Key؛ خالی حفظ قبلی", "API key; blank keeps existing"), "", 'type="password" autocomplete="new-password" dir="ltr"')}${vField("sg-ipn", "NOWPayments IPN Secret", "", 'type="password" autocomplete="new-password" dir="ltr"')}</div><div class="v-divider"></div><h4 class="text-sm font-bold">${L("کارت‌به‌کارت", "Bank transfer")}</h4><div class="grid sm:grid-cols-2 gap-4">${vField("sg-card", L("شماره کارت", "Card number"), g.cardNumber, 'dir="ltr" inputmode="numeric"')}${vField("sg-holder", L("صاحب کارت", "Card holder"), g.cardHolder)}</div><div class="v-divider"></div><h4 class="text-sm font-bold">${L("رمزارز مستقیم / Factor API", "Direct cryptocurrency / Factor API")}</h4>${vSelect(
       "sg-currency",
       L("ارز / شبکه", "Currency / network"),
       [
@@ -1234,7 +1258,7 @@ async function svCampaigns() {
   SV.cache.settings = cfg.settings;
   const w = cfg.settings.wheel;
   return svRows(
-    `${vSection(L("گردونه هدیه", "Reward wheel"), `${vCheck("sw-enabled", L("گردونه فعال", "Enable wheel"), w.enabled)}<div class="grid sm:grid-cols-2 gap-4">${vField("sw-daily", L("تعداد روزانه هر کاربر", "Daily spins per user"), w.dailySpins, 'type="number" min="1" max="10"')}${vField("sw-fee", L("هزینه چرخش تومان؛ صفر = رایگان", "Spin fee (toman); 0 = free"), w.fee, 'type="number" min="0"')}${vField("sw-budget", L("سقف کل هدیه روزانه تومان", "Daily total reward budget (toman)"), w.budget, 'type="number" min="0"')}</div>${vArea("sw-prizes", L("هر خط: عنوان | مبلغ هدیه | وزن احتمال", "One per line: Title | Reward amount | Weight"), w.prizes.map((p) => `${p.title} | ${p.amount} | ${p.weight}`).join("\n"), 5)}${vNote(L("وزن‌ها احتمال نسبی‌اند. موجودی، سهمیه و بودجه در یک تراکنش کنترل می‌شوند. در صورت تعیین هزینه، مسئولیت الزامات قانونی و شرایط درگاه با گرداننده است؛ پیش‌فرض توصیه‌شده رایگان است.", "Weights define relative probability. Balance, quota and budget are transactional. Paid chance promotions may require legal/provider approval; free mode is recommended."), true)}`, svBtn(t("save"), "svWheelSave", "", true))}${vSection(L("قرعه‌کشی رایگان زمان‌دار", "Scheduled free raffles"), r.rows.length ? r.rows.map((r) => `<div class="v-row"><div class="v-row-main"><p class="text-sm font-bold">${esc(r.title)} ${svBadge(r.status)}</p><p class="v-meta">${fmtNum(r.entries.length)} ${L("شرکت‌کننده", "entries")} · ${fmtDate(r.closesAt)}<br>${r.winners.map((w) => esc(w.userId) + " · " + vMoney(w.amount)).join(" / ")}</p></div></div>`).join("") : vEmpty(L("قرعه‌کشی‌ای تعریف نشده است.", "No raffles yet.")), svBtn(L("قرعه‌کشی جدید", "New raffle"), "svRaffleNew", "", true))}`,
+    `${svDiceSettings(cfg.settings.dice)}${vSection(L("گردونه هدیه", "Reward wheel"), `${vCheck("sw-enabled", L("گردونه فعال", "Enable wheel"), w.enabled)}<div class="grid sm:grid-cols-2 gap-4">${vField("sw-daily", L("تعداد روزانه هر کاربر", "Daily spins per user"), w.dailySpins, 'type="number" min="1" max="10"')}${vField("sw-fee", L("هزینه چرخش تومان؛ صفر = رایگان", "Spin fee (toman); 0 = free"), w.fee, 'type="number" min="0"')}${vField("sw-budget", L("سقف کل هدیه روزانه تومان", "Daily total reward budget (toman)"), w.budget, 'type="number" min="0"')}</div>${vArea("sw-prizes", L("هر خط: عنوان | مبلغ هدیه | وزن احتمال", "One per line: Title | Reward amount | Weight"), w.prizes.map((p) => `${p.title} | ${p.amount} | ${p.weight}`).join("\n"), 5)}${vNote(L("وزن‌ها احتمال نسبی‌اند. موجودی، سهمیه و بودجه در یک تراکنش کنترل می‌شوند. در صورت تعیین هزینه، مسئولیت الزامات قانونی و شرایط درگاه با گرداننده است؛ پیش‌فرض توصیه‌شده رایگان است.", "Weights define relative probability. Balance, quota and budget are transactional. Paid chance promotions may require legal/provider approval; free mode is recommended."), true)}`, svBtn(t("save"), "svWheelSave", "", true))}${vSection(L("قرعه‌کشی رایگان زمان‌دار", "Scheduled free raffles"), r.rows.length ? r.rows.map((r) => `<div class="v-row"><div class="v-row-main"><p class="text-sm font-bold">${esc(r.title)} ${svBadge(r.status)}</p><p class="v-meta">${fmtNum(r.entries.length)} ${L("شرکت‌کننده", "entries")} · ${fmtDate(r.closesAt)}<br>${r.winners.map((w) => esc(w.userId) + " · " + vMoney(w.amount)).join(" / ")}</p></div></div>`).join("") : vEmpty(L("قرعه‌کشی‌ای تعریف نشده است.", "No raffles yet.")), svBtn(L("قرعه‌کشی جدید", "New raffle"), "svRaffleNew", "", true))}`,
   );
 }
 ACTIONS.svWheelSave = async () => {
@@ -1299,7 +1323,11 @@ ACTIONS.svRaffleSave = async () => {
 };
 
 async function svSettings() {
-  const [d, p] = await Promise.all([svAPI("/settings"), svAPI("/plans")]);
+  const [d, p, rates] = await Promise.all([
+    svAPI("/settings"),
+    svAPI("/plans"),
+    svAPI("/rates"),
+  ]);
   SV.cache.settings = d.settings;
   SV.cache.plans = p.rows;
   const s = d.settings;
@@ -1327,8 +1355,8 @@ async function svSettings() {
         .map(([k, l]) => vField("vs-" + k, l, s[k], 'type="number" min="0"'))
         .join(
           "",
-        )}</div>${vCheck("vs-agentrequests", L("پذیرش درخواست نمایندگی", "Accept reseller requests"), s.agentRequests)}${vNote(L("نرخ‌ها توسط مدیر تعیین می‌شوند و در هر فاکتور ثابت می‌مانند؛ نرخ بازار زنده نیست. سیاست‌های Telegram Stars و درگاه‌ها را برای کالای دیجیتال رعایت کنید.", "Conversion rates are configured by the administrator and locked per invoice; they are not live market quotes. Follow Telegram Stars and payment-provider rules for digital goods."), true)}`,
-    )}${vSection(L("پایش سرویس‌ها و اعلان", "Service monitoring & alerts"), `<div class="grid sm:grid-cols-2 gap-4">${vField("vs-lowgb", L("هشدار مانده حجم کمتر از GB", "Alert below remaining GB"), s.lowVolumeGB, 'type="number" min="0" step="0.1"')}${vField("vs-lowdays", L("هشدار مانده روز کمتر از", "Alert below remaining days"), s.lowDays, 'type="number" min="0" max="365"')}${vField("vs-sync", L("بازه بروزرسانی دقیقه", "Sync interval (minutes)"), s.syncMinutes, 'type="number" min="1" max="1440"')}${vField("vs-delete", L("حذف سرویس چند روز پس از انقضا؛ صفر خاموش", "Delete days after expiry; 0 disables"), s.deleteExpiredDays, 'type="number" min="0" max="365"')}</div>${vNote(L("بروزرسانی‌ها در دسته‌های محدود و صف سرور انجام می‌شود، نه تضمین لحظه‌ای. برای WGDashboard زمان سرور را UTC قرار دهید. مصرف انبار دستی قابل اندازه‌گیری نیست.", "Synchronization uses bounded server batches, not a real-time guarantee. WGDashboard server time should be UTC. Manual-stock usage cannot be measured."))}`)}${vSection(
+        )}</div>${vCheck("vs-agentrequests", L("پذیرش درخواست نمایندگی", "Accept reseller requests"), s.agentRequests)}${vNote(L("نرخ‌ها از حالت دستی یا منبع خودکار انتخاب می‌شوند و در هر فاکتور ثابت می‌مانند؛ تغییر نرخ، فاکتور قبلی را تغییر نمی‌دهد. سیاست‌های Telegram Stars و درگاه‌ها را برای کالای دیجیتال رعایت کنید.", "Rates use manual settings or the configured automatic source, and are locked per invoice. Follow Telegram Stars and payment-provider rules for digital goods."), true)}`,
+    )}${svRateSettings(s, rates)}${vSection(L("پایش سرویس‌ها و اعلان", "Service monitoring & alerts"), `<div class="grid sm:grid-cols-2 gap-4">${vField("vs-lowgb", L("هشدار مانده حجم کمتر از GB", "Alert below remaining GB"), s.lowVolumeGB, 'type="number" min="0" step="0.1"')}${vField("vs-lowdays", L("هشدار مانده روز کمتر از", "Alert below remaining days"), s.lowDays, 'type="number" min="0" max="365"')}${vField("vs-sync", L("بازه بروزرسانی دقیقه", "Sync interval (minutes)"), s.syncMinutes, 'type="number" min="1" max="1440"')}${vField("vs-delete", L("حذف سرویس چند روز پس از انقضا؛ صفر خاموش", "Delete days after expiry; 0 disables"), s.deleteExpiredDays, 'type="number" min="0" max="365"')}</div>${vNote(L("بروزرسانی‌ها در دسته‌های محدود و صف سرور انجام می‌شود، نه تضمین لحظه‌ای. برای WGDashboard زمان سرور را UTC قرار دهید. مصرف انبار دستی قابل اندازه‌گیری نیست.", "Synchronization uses bounded server batches, not a real-time guarantee. WGDashboard server time should be UTC. Manual-stock usage cannot be measured."))}`)}${vSection(
       L("کلاینت‌ها و دکمه‌های تلگرام", "Client apps & Telegram buttons"),
       vArea(
         "vs-apps",
@@ -1421,6 +1449,15 @@ ACTIONS.svSettingsSave = async () => {
     lowDays: vNum("vs-lowdays"),
     syncMinutes: vNum("vs-sync"),
     deleteExpiredDays: vNum("vs-delete"),
+    rates: {
+      mode: vVal("vs-rates-mode"),
+      refreshMinutes: vNum("vs-rates-refresh"),
+      maxAgeMinutes: vNum("vs-rates-age"),
+    },
+    dailyReport: {
+      enabled: vOn("vs-daily-enabled"),
+      hour: vNum("vs-daily-hour"),
+    },
     buttonStyle: vVal("vs-button-style"),
     premiumEmojiId: vVal("vs-emoji"),
     clientApps: vLines(vVal("vs-apps")).map((l) => {
@@ -1636,4 +1673,82 @@ ACTIONS.svBotTokenSave = async () => {
   });
   toast(t("saved"), "success");
   ACTIONS.svBots();
+};
+
+function svRateSettings(s, data) {
+  const snapshot = data.snapshot;
+  return vSection(
+    L("نرخ ارز و گزارش روزانه", "Currency rates & daily reporting"),
+    `<div class="grid sm:grid-cols-2 gap-4">${vSelect(
+      "vs-rates-mode",
+      L("روش نرخ‌گذاری", "Rate source"),
+      [
+        ["manual", L("دستی از تنظیمات مدیر", "Manual administrator rates")],
+        [
+          "swapwallet",
+          L(
+            "خودکار از API مرجع SwapWallet",
+            "Automatic SwapWallet reference API",
+          ),
+        ],
+      ],
+      s.rates.mode,
+    )}${vField("vs-rates-refresh", L("فاصله بررسی دقیقه", "Refresh interval (minutes)"), s.rates.refreshMinutes, 'type="number" min="1" max="60"')}${vField("vs-rates-age", L("بیشترین عمر نرخ معتبر دقیقه", "Maximum quote age (minutes)"), s.rates.maxAgeMinutes, 'type="number" min="1" max="1440"')}</div><div class="mt-4">${svBtn(L("بررسی منبع و دریافت نرخ", "Fetch reference rates"), "svRefreshRates")}</div><div id="sv-market-status" class="v-meta">${snapshot?.at ? esc(L("آخرین نرخ ذخیره‌شده: ", "Last stored quote: ")) + fmtDate(snapshot.at) + " · USD " + vMoney(snapshot.rates.USD) + " · TRX " + vMoney(snapshot.rates.TRX) + " · TON " + vMoney(snapshot.rates.TON) : L("نرخ خودکار هنوز دریافت نشده است.", "No automatic quote has been fetched.")}${snapshot?.error ? "<br>" + esc(vError(snapshot.error)) : ""}</div><div class="mt-4">${vNote(L("در حالت خودکار، نبود نرخ معتبر ساخت فاکتور جدید را متوقف می‌کند؛ مبلغ فاکتور قبلی بازنویسی نمی‌شود. نرخ مرجع به تومان است و به عدد صحیح پایین گرد می‌شود.", "In automatic mode, missing or stale rates block new invoices. Existing invoices keep their original quote. Reference rates are in toman and rounded down to an integer."))}</div><div class="v-divider"></div>${vCheck("vs-daily-enabled", L("ارسال خلاصه مالی ۲۴ ساعت اخیر به چت گزارش مدیر", "Send a daily 24-hour summary to the administrator report chat"), s.dailyReport.enabled)}${vField("vs-daily-hour", L("ساعت ارسال بر اساس تهران", "Report hour in Tehran"), s.dailyReport.hour, 'type="number" min="0" max="23"')}`,
+  );
+}
+ACTIONS.svRefreshRates = async () => {
+  const d = await svAPI("/rates/refresh", { method: "POST" });
+  $("sv-market-status").textContent =
+    fmtDate(d.snapshot.at) +
+    " · USD " +
+    vMoney(d.snapshot.rates.USD) +
+    " · TRX " +
+    vMoney(d.snapshot.rates.TRX) +
+    " · TON " +
+    vMoney(d.snapshot.rates.TON);
+  toast(
+    L(
+      "نرخ مرجع دریافت شد؛ حالت فعال نرخ‌گذاری در تنظیمات ذخیره می‌شود.",
+      "Reference rates fetched. Save settings to change the active mode.",
+    ),
+    "success",
+  );
+};
+function svDiceSettings(d) {
+  return vSection(
+    L("تاس و اسلات رایگان تلگرام", "Free Telegram dice / slots"),
+    `${vCheck("sd-enabled", L("فعال‌سازی تاس", "Enable dice"), d.enabled)}<div class="grid sm:grid-cols-2 gap-4">${vSelect(
+      "sd-emoji",
+      L("نوع بازی", "Game type"),
+      [
+        ["🎲", L("تاس؛ عدد ۶ برنده است", "Dice; 6 wins")],
+        [
+          "🎰",
+          L(
+            "اسلات؛ نتیجه‌های ۱، ۲۲، ۴۳، ۶۴",
+            "Slots; results 1, 22, 43, 64 win",
+          ),
+        ],
+      ],
+      d.emoji,
+    )}${vField("sd-prize", L("اعتبار جایزه به تومان", "Prize wallet credit (toman)"), d.prize, 'type="number" min="0" max="10000000"')}${vField("sd-hours", L("فاصله مجاز هر کاربر ساعت", "Customer cooldown (hours)"), d.intervalHours, 'type="number" min="1" max="168"')}${vField("sd-budget", L("سقف کل جایزه روزانه تومان", "Daily prize budget (toman)"), d.budget, 'type="number" min="0"')}</div>${vCheck("sd-new", L("فقط کاربرانی که خرید خدمات نداشته‌اند", "Only customers with no prior service purchases"), d.newUsersOnly)}${vCheck("sd-agents", L("نمایندگان هم مجاز باشند", "Allow resellers too"), d.agentsAllowed)}${vNote(L("بازی رایگان است و نتیجه فقط از sendDice تلگرام پذیرفته می‌شود. نتیجه ارسال‌شده توسط مرورگر یا تصویر تاس معتبر نیست. در خطای ارتباط، بدون نتیجه قابل‌اعتماد جایزه خودکار داده نمی‌شود.", "The game is free. Only the Telegram sendDice result is trusted, never browser values or screenshots. An uncertain response does not automatically award a prize."))}`,
+    svBtn(t("save"), "svDiceSave", "", true),
+  );
+}
+ACTIONS.svDiceSave = async () => {
+  await svAPI("/settings", {
+    method: "PUT",
+    body: {
+      dice: {
+        enabled: vOn("sd-enabled"),
+        emoji: vVal("sd-emoji"),
+        prize: vNum("sd-prize"),
+        intervalHours: vNum("sd-hours"),
+        budget: vNum("sd-budget"),
+        newUsersOnly: vOn("sd-new"),
+        agentsAllowed: vOn("sd-agents"),
+      },
+    },
+  });
+  toast(t("saved"), "success");
 };

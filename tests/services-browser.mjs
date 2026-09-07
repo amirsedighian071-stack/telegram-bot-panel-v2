@@ -1,3 +1,4 @@
+import {loginAdmin} from './browser-auth.mjs';
 // Isolated local Workerd end-to-end test. Never run against a production account.
 import { chromium } from "@playwright/test";
 import { createHmac } from "node:crypto";
@@ -48,12 +49,7 @@ async function submit(page) {
   await page.waitForSelector("#modal-wrap.hidden", { state: "attached" });
 }
 try {
-  await admin.goto(base);
-  await admin
-    .locator("#pw")
-    .fill(process.env.E2E_ADMIN_PASSWORD || "botpanel123");
-  await admin.locator("#login-btn").click();
-  await admin.waitForSelector("#view");
+  await loginAdmin(admin,base);
   token = await admin.evaluate(() => S.token);
   original = (await api("GET", "/settings")).settings;
   await api("PUT", "/settings", {

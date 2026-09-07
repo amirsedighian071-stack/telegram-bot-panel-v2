@@ -1,3 +1,5 @@
+import { refreshMarketRates } from "./rates.js";
+import { playDice } from "./engagement.js";
 import { Hono } from "hono";
 import { requireAuth } from "../auth.js";
 import { getUser, getSettings } from "../kv.js";
@@ -172,6 +174,16 @@ admin.get("/bootstrap", async (c) => {
       runtime: "Cloudflare Workers + Durable Objects SQLite",
     },
   });
+});
+admin.get("/rates", async (c) =>
+  result(c, {
+    config: (await serviceSettings(c.env)).rates,
+    snapshot: await get(c.env, "market", "latest"),
+  }),
+);
+admin.post("/rates/refresh", async (c) => {
+  await limited(c.env, "admin-rate-refresh", 5, 60);
+  return result(c, { snapshot: await refreshMarketRates(c.env) });
 });
 admin.get("/settings", async (c) =>
   result(c, { settings: await serviceSettings(c.env) }),
@@ -827,6 +839,17 @@ portal.post("/wheel", async (c) => {
       c.get("customer").id,
       b.requestId,
       b.expectedFee,
+    ),
+  });
+});
+
+portal.post("/dice", async (c) => {
+  await limited(c.env, "dice-api:" + c.get("customer").id, 5, 60);
+  return result(c, {
+    game: await playDice(
+      c.env,
+      c.get("customer").id,
+      (await body(c)).requestId,
     ),
   });
 });

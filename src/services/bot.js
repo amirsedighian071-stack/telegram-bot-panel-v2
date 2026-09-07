@@ -1,3 +1,4 @@
+import { playDice } from "./engagement.js";
 import { getSettings, putUser } from "../kv.js";
 import { enabled, text as tr } from "../config.js";
 import { tgApi, sendToUser, resolveToken } from "../bot-api.js";
@@ -198,6 +199,7 @@ export async function serviceHome(env, user, lang = "fa") {
           "vpn:agent",
         ),
         btn(tr("🎡 گردونه", "🎡 Rewards", lang), "vpn:wheel"),
+        btn(tr("🎲 تاس رایگان", "🎲 Free dice", lang), "vpn:dice:" + id()),
       ],
     ],
   );
@@ -545,6 +547,18 @@ export async function serviceCallback(env, user, lang, data) {
         ],
       ],
     );
+  } else if (act === "dice") {
+    const game = await playDice(env, user.id, value || id());
+    if (game.status !== "done")
+      await say(
+        env,
+        user,
+        tr(
+          "نتیجه قابل تأیید نبود؛ ابتدا ربات را شروع کنید یا با پشتیبانی تماس بگیرید.",
+          "The roll could not be verified. Start the bot first or contact support.",
+          lang,
+        ),
+      );
   } else if (act === "spin") {
     const r = await spinWheel(env, user.id, value, Number(data.split(":")[3]));
     await say(env, user, `🎁 ${r.prize}\n${amount(r.amount, lang)}`);
@@ -564,6 +578,7 @@ export async function serviceMessage(env, user, lang, msg) {
     "/giftcode",
     "/agent",
     "/wheel",
+    "/dice",
   ];
   if (user.flow?.type === "svc_phone" && msg.contact) {
     await verifyPhone(env, user.id, msg.contact);
@@ -592,6 +607,7 @@ export async function serviceMessage(env, user, lang, msg) {
       "/giftcode": "gift",
       "/agent": "agent",
       "/wheel": "wheel",
+      "/dice": "dice",
     }[cmd];
     return serviceCallback(env, user, lang, "vpn:" + action);
   }

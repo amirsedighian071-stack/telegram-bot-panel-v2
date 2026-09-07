@@ -25,6 +25,7 @@ beforeEach(async()=>{
   outer.BOT_STATE={idFromName:()=> 'test',get:()=>coordinator};
   coordinator=new BotCoordinator(context,outer);env=coordinator.env;updateId=100;
   const login=await raw('POST','/api/auth/login',{password:'botpanel123'},false);token=(await login.json()).data.token;
+  await api('POST','/auth/change-password',{currentPassword:'botpanel123',newPassword:'durable-test-private-password'});
 });
 afterEach(()=>{globalThis.fetch=originalFetch;storage.db.close();});
 function raw(method,path,body,auth=true,headers={}) {
@@ -76,8 +77,8 @@ test('busy groups use separate ordered queues instead of waiting for a slow broa
   await update({message:{message_id:500,chat:{id:-1001234,type:'supergroup'},from:{id:88},text:'https://spam.com'}});
   assert(tg.calls.some(c=>c.method==='deleteMessage'&&c.payload.message_id===500));release();await sending;
 });
-test('production refuses public default passwords; salted passwords migrate legacy hashes',async()=>{
-  const production={BOT_KV:new MemoryKV()};assert.equal(await bootstrapRequired(production),true);assert.equal(await verifyAdminPassword(production,'botpanel123'),false);
+test('production supports no-env initial passwords; salted passwords migrate legacy hashes',async()=>{
+  const production={BOT_KV:new MemoryKV()};assert.equal(await bootstrapRequired(production),false);assert.equal(await verifyAdminPassword(production,'botpanel123'),true);
   production.ADMIN_PASSWORD='unique-bootstrap-password';assert.equal(await verifyAdminPassword(production,production.ADMIN_PASSWORD),true);
   await putJson(production,'admin_auth',{hash:await sha256hex('legacy-password')});assert.equal(await verifyAdminPassword(production,'legacy-password'),true);
   const record=await getJson(production,'admin_auth');assert.equal(record.algorithm,'pbkdf2-sha256');assert(record.salt);assert.equal(record.hash===await sha256hex('legacy-password'),false);

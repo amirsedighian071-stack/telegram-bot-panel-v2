@@ -1,3 +1,4 @@
+import {loginAdmin} from './browser-auth.mjs';
 // Run against an isolated local Worker: npm run dev, then npm run test:ui.
 // Telegram upload/delivery HTTP endpoints are mocked only in the browser test.
 import { chromium } from '@playwright/test';
@@ -37,10 +38,7 @@ async function submit() {
   await page.waitForSelector('#modal-wrap.hidden', { state: 'attached' });
 }
 try {
-  await page.goto(base);
-  await page.locator('#pw').fill(process.env.E2E_ADMIN_PASSWORD || 'botpanel123');
-  await page.locator('#login-btn').click();
-  await page.waitForSelector('#view');
+  await loginAdmin(page,base);
   token = await page.evaluate(() => S.token);
   original = (await api('GET', '/settings')).settings;
   await api('PUT', '/settings', { botPurpose: 'custom', customModules: Object.keys(await page.evaluate(() => MODULE_LABELS)) });
@@ -49,7 +47,7 @@ try {
 
   await navigate('settings'); await page.waitForSelector('#v-profile-cards');
   assert.equal(await page.locator('.v-profile').count(), 13);
-  assert.equal(await page.locator('html').getAttribute('data-panel-version'), '3.0.0');
+  assert.equal(await page.locator('html').getAttribute('data-panel-version'), '3.1.0');
   await page.locator('.v-profile[data-id="channel"]').click();
   assert((await page.locator('#v-purpose-preview').innerText()).includes('دیپ‌لینک'));
   assert.equal(await page.locator('.v-profile[data-id="channel"]').getAttribute('aria-pressed'), 'true');
