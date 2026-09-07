@@ -324,12 +324,16 @@
     });
   }
 
+  function apiURL(path) {
+    const bot = localStorage.getItem('bp_managed_bot') || '';
+    return bot && /^[a-f0-9]{16}$/.test(bot) && !/^\/(auth|bots|health)(?:\/|$)/.test(path) ? '/api/bots/' + bot + '/admin/api' + path : '/api' + path;
+  }
   async function api(path, opts = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (S.token) headers['Authorization'] = 'Bearer ' + S.token;
     let res;
     try {
-      res = await fetch('/api' + path, { method: opts.method || 'GET', headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
+      res = await fetch(apiURL(path), { method: opts.method || 'GET', headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
     } catch (e) {
       throw new Error(t('offline'));
     }

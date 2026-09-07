@@ -16,7 +16,7 @@ export function telegramMock() {
   const calls=[], members=new Map(); let nextMessage=100, override=null;
   const fetcher=async (url,options={})=>{
     const u=String(url), method=u.split('/').at(-1);
-    let payload=options.body instanceof FormData ? Object.fromEntries(options.body) : options.body ? JSON.parse(options.body) : {};
+    let payload=options.body instanceof FormData || options.body instanceof URLSearchParams ? Object.fromEntries(options.body) : options.body ? JSON.parse(options.body) : {};
     calls.push({url:u,method,payload});
     if(override){const r=await override(u,method,payload);if(r!==undefined)return r instanceof Response?r:Response.json(r);}
     if(u.includes('/file/bot'))return new Response(new Uint8Array([0xff,0xd8,0xff]),{headers:{'content-type':'image/jpeg'}});

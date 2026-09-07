@@ -1,3 +1,10 @@
+import managedRoutes, { managedPublic, TENANT_KEY } from './services/managed-bots.js';
+import { unseal as unsealManaged } from './services/common.js';
+import serviceRoutes, { portal } from './services/routes.js';
+import { serviceTick } from './services/engine.js';
+import { fundingTick, handleServicePayment } from './services/payments.js';
+import { backupTick } from './services/reports.js';
+import { subscription, combinedSubscription } from './services/subscriptions.js';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { handleUpdate } from './telegram.js';
@@ -21,9 +28,14 @@ import mediaRoutes from './media.js';
 import studioRoutes from './routes/studio.routes.js';
 
 const api = new Hono().basePath('/api');
-api.use('*', async (c, next) => bodyLimit({ maxSize: c.req.path.startsWith('/api/media') ? 22 * 1024 * 1024 : 1024 * 1024, onError: c => c.json({ ok: false, error: 'request_too_large' }, 413) })(c, next));
+api.use('*', async (c, next) => {
+  const proxied = /^\/api\/bots\/[a-f0-9]{16}\/admin(\/api\/.*)$/.exec(c.req.path);
+  const path = proxied ? proxied[1] : c.req.path;
+  const maxSize = path.startsWith('/api/media') ? 22 * 1024 * 1024 : path.startsWith('/api/services/backup/') ? 20 * 1024 * 1024 : /^\/api\/portal\/payments\/[^/]+\/receipt$/.test(path) ? 12 * 1024 * 1024 : 1024 * 1024;
+  return bodyLimit({maxSize,onError:c=>c.json({ok:false,error:'request_too_large'},413)})(c,next);
+});
 api.use('*', async (c, next) => { c.header('cache-control', 'no-store'); c.header('x-content-type-options', 'nosniff'); await next(); });
-for (const [path, routes] of Object.entries({ auth: authRoutes, dashboard: dashboardRoutes, users: usersRoutes, broadcast: broadcastRoutes, engagement: engagementRoutes, support: supportRoutes, menu: menuRoutes, settings: settingsRoutes, media: mediaRoutes, studio: studioRoutes })) api.route('/' + path, routes);
+for (const [path, routes] of Object.entries({ auth: authRoutes, dashboard: dashboardRoutes, users: usersRoutes, broadcast: broadcastRoutes, engagement: engagementRoutes, support: supportRoutes, menu: menuRoutes, settings: settingsRoutes, media: mediaRoutes, studio: studioRoutes, services: serviceRoutes, portal, bots: managedRoutes })) api.route('/' + path, routes);
 api.get('/health', c => c.json({ ok: true, data: { ts: Date.now(), version: c.env.APP_VERSION || '2.0.0', colo: c.req.raw.cf?.colo || null, durable: !!c.env.__coordinated } }));
 api.notFound(c => c.json({ ok: false, error: 'not_found' }, 404));
 api.onError((err, c) => {
@@ -38,13 +50,14 @@ export async function runScheduled(env) {
   const errors = [];
   await putJson(env, 'v2:runtime:cron', { at, status: 'running' });
   // Each subsystem records its own delivery results; one failure must not stop the others.
-  for (const [name, fn] of Object.entries({ orders: expireOrders, groups: groupTick, broadcasts: broadcastTick, feeds: feedTick, relay: relayTick })) {
+  for (const [name, fn] of Object.entries({ orders: expireOrders, groups: groupTick, broadcasts: broadcastTick, feeds: feedTick, relay: relayTick, services: serviceTick, funding: fundingTick, backups: backupTick })) {
     try { await fn(env); } catch (e) { errors.push({ name, error: String(e.message).slice(0, 160) }); }
   }
   await putJson(env, 'v2:runtime:cron', { at, finishedAt: Date.now(), status: errors.length ? 'partial' : 'ok', errors });
 }
 async function dispatch(request, env, ctx) {
   const { pathname } = new URL(request.url);
+  if (pathname.startsWith('/bots/')) { try { return await managedPublic(request, env); } catch (error) { return Response.json({ok:false,error:error.status?error.message:'managed_request_failed'},{status:error.status||500}); } }
   if (pathname === '/internal/tick') { await runScheduled(env); return Response.json({ ok: true }); }
   if (pathname === '/telegram/webhook') {
     if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
@@ -57,6 +70,9 @@ async function dispatch(request, env, ctx) {
     try { await handleUpdate(env, update); } catch (e) { console.error('[webhook] processing failed', e.name); return Response.json({ ok: false }, { status: 500 }); }
     return Response.json({ ok: true });
   }
+  if (pathname.startsWith('/service-pay/')) return handleServicePayment(request, env);
+  if (pathname.startsWith('/sub-all/')) return combinedSubscription(request, env);
+  if (pathname.startsWith('/sub/')) return subscription(request, env);
   if (pathname.startsWith('/pay/')) return handlePayment(request, env);
   return api.fetch(request, env, ctx);
 }
@@ -82,25 +98,60 @@ export class BotCoordinator {
     const current = await this.state.storage.getAlarm(), next = Date.now() + 15000;
     if (!current || current > next) await this.state.storage.setAlarm(next);
   }
+  async environment() {
+    const row = this.kv.sql.exec('SELECT value FROM panel_kv WHERE key = ? AND deleted=0', TENANT_KEY).toArray()[0];
+    if (!row?.value) return this.env;
+    this.kv.legacy = null;
+    if (this.managedStamp === row.value && this.managedEnv) return this.managedEnv;
+    const meta = JSON.parse(row.value), secrets = await unsealManaged(this.env, meta.credentials);
+    this.managedEnv = { BOT_KV: this.kv, BOT_STATE: this.env.BOT_STATE, ASSETS: this.env.ASSETS, VAULT_KEY: this.env.VAULT_KEY, APP_VERSION: this.env.APP_VERSION, BOT_TOKEN: secrets.token, WEBHOOK_SECRET: secrets.webhookSecret, PUBLIC_BASE_URL: meta.baseUrl, MANAGED_BASE_URL: meta.baseUrl, MANAGED_BOT_ID: meta.id, __coordinated: true, withGroupLock: this.env.withGroupLock };
+    if (this.env.BACKUPS) { const bucket = this.env.BACKUPS; this.managedEnv.BACKUPS = { put: (path, data, opts) => bucket.put('bots/'+meta.id+'/'+path, data, opts) }; this.managedEnv.BACKUP_PASSWORD = this.env.BACKUP_PASSWORD; }
+    this.managedStamp = row.value;
+    return this.managedEnv;
+  }
   async fetch(request) {
-    const path = new URL(request.url).pathname;
-    const run = () => dispatch(request, this.env, this.state);
+    let path = new URL(request.url).pathname;
+    if (path === '/internal/managed/init') return this.enqueue(async () => {
+      const meta = await request.json();
+      if (!meta?.id || !meta?.credentials || !meta?.baseUrl) return Response.json({ok:false},{status:400});
+      this.kv.legacy = null;
+      const exists = this.kv.sql.exec('SELECT value FROM panel_kv WHERE key=? AND deleted=0', TENANT_KEY).toArray()[0];
+      if (!exists) {
+        await this.kv.batch([{key:TENANT_KEY,value:JSON.stringify(meta)},{key:'settings',value:JSON.stringify({botPurpose:'vpn',schemaVersion:3,botUsername:meta.username,publicBaseUrl:meta.baseUrl})},{key:'v2:svc-config:main',value:JSON.stringify({publicUrl:meta.baseUrl,brand:{name:meta.title,nameEn:meta.title,mark:'S',accent:'#38bdf8',logo:''}})}]);
+      } else if (exists.value !== JSON.stringify(meta)) await this.kv.put(TENANT_KEY, JSON.stringify(meta));
+      await this.arm();
+      return Response.json({ok:true});
+    });
+    let requestEnv = await this.environment();
+    if (path === '/internal/managed/dispatch') {
+      if (!requestEnv.MANAGED_BOT_ID) return Response.json({ok:false,error:'managed_bot_initialization_required'},{status:503});
+      const route = request.headers.get('x-managed-route') || '';
+      if (!route.startsWith('/') || route.startsWith('//') || route.includes('..')) return Response.json({ok:false},{status:400});
+      const url = new URL(route, requestEnv.MANAGED_BASE_URL);
+      const admin = request.headers.get('x-managed-admin') === '1';
+      request = new Request(url, {method:request.method,headers:request.headers,...(['GET','HEAD'].includes(request.method)?{}:{body:request.body,duplex:'half'})});
+      requestEnv = {...requestEnv,TRUSTED_PARENT_ADMIN:admin}; path=url.pathname;
+    }
+    const run = () => dispatch(request, requestEnv, this.state);
     // Uploads/downloads have independent UUID records and need not block group moderation.
+    let fastPreCheckout = false;
+    const independentRead = request.method === 'GET' && (path.startsWith('/bots/') || path.startsWith('/api/services/') || path.startsWith('/api/portal/') || path.startsWith('/sub/') || path.startsWith('/sub-all/'));
     const independentMedia = path.startsWith('/api/media') || /^\/api\/studio\/orders\/[^/]+\/receipt$/.test(path);
     let groupId = /^\/api\/studio\/groups\/(-\d+)(?:\/|$)/.exec(path)?.[1];
     if (path === '/telegram/webhook' || (path === '/api/studio/groups' && request.method === 'POST')) {
       const body = await request.clone().json().catch(() => null);
+      fastPreCheckout = !!body?.pre_checkout_query;
       const update = body?.message || body?.edited_message || body?.chat_member || body?.my_chat_member || (body?.callback_query?.data?.startsWith('cap:') ? body.callback_query.message : null);
       if (update && ['group', 'supergroup'].includes(update.chat?.type)) groupId = String(update.chat.id);
       if (path === '/api/studio/groups' && /^-\d+$/.test(body?.chatId)) groupId = body.chatId;
     }
     // A slow broadcast/upload must not serialize unrelated busy groups. Each group keeps its own ordered mutations.
-    const response = await (independentMedia ? run() : groupId ? this.withGroupLock(groupId, run) : this.enqueue(run));
+    const response = await (independentMedia || independentRead || fastPreCheckout ? run() : groupId ? this.withGroupLock(groupId, run) : this.enqueue(run));
     if (request.method !== 'GET' || path.startsWith('/pay/')) await this.arm();
     return response;
   }
   async alarm() {
-    await this.enqueue(() => runScheduled(this.env)); this.kv.cleanup();
+    await this.enqueue(async () => runScheduled(await this.environment())); this.kv.cleanup();
     await this.state.storage.setAlarm(Date.now() + 60000);
   }
 }
@@ -108,6 +159,10 @@ function stub(env) { return env.BOT_STATE.get(env.BOT_STATE.idFromName('telegram
 export default {
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
+    if (/^\/bots\/[a-f0-9]{16}\/portal\/?$/.test(path) && request.method === 'GET') {
+      const assetURL = new URL('/portal/', request.url);
+      return env.ASSETS ? env.ASSETS.fetch(new Request(assetURL, request)) : new Response('Not Found', {status:404});
+    }
     if (path.startsWith('/internal/')) return new Response('Not Found', { status: 404 });
     if (path === '/telegram/webhook') {
       if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
@@ -115,7 +170,7 @@ export default {
       if (!env.WEBHOOK_SECRET || !await safeEqual(secret, env.WEBHOOK_SECRET)) return Response.json({ ok: false, error: 'unauthorized' }, { status: 401 });
       if (Number(request.headers.get('content-length') || 0) > 1024 * 1024) return new Response('Too large', { status: 413 });
     }
-    if (path.startsWith('/api/') || path === '/telegram/webhook' || path.startsWith('/pay/')) {
+    if (path.startsWith('/api/') || path === '/telegram/webhook' || path.startsWith('/pay/') || path.startsWith('/service-pay/') || path.startsWith('/sub/') || path.startsWith('/sub-all/') || path.startsWith('/bots/')) {
       if (env.BOT_STATE) return stub(env).fetch(request);
       if (env.TEST_MODE) return dispatch(request, env, ctx);
       return Response.json({ ok: false, error: 'durable_object_binding_required' }, { status: 503 });

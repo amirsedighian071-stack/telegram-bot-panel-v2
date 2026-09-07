@@ -77,7 +77,7 @@ const vCloseBase = closeModal;
 closeModal = function () { ddClose(); for (const url of V2.urls) URL.revokeObjectURL(url); V2.urls.clear(); vCloseBase(); };
 function vBlobUrl(blob) { const url = URL.createObjectURL(blob); V2.urls.add(url); return url; }
 async function vAuthorizedFile(path) {
-  const r = await fetch('/api' + path, { headers: { Authorization: 'Bearer ' + S.token } });
+  const r = await fetch(apiURL(path), { headers: { Authorization: 'Bearer ' + S.token } });
   if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.error || 'file_unavailable'); }
   return r.blob();
 }
@@ -157,7 +157,7 @@ async function uploadSelected(input, file) {
     if (slot === 'ph-media' && vVal('ph-operation') !== 'none') form.append('operation', vVal('ph-operation'));
     host.innerHTML = `<span>${L('در حال آپلود…', 'Uploading…')}</span><progress class="v-progress" max="100" value="0"></progress>`;
     const data = await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest(); xhr.open('POST', '/api/media'); xhr.setRequestHeader('Authorization', 'Bearer ' + S.token); xhr.timeout = 120000;
+      const xhr = new XMLHttpRequest(); xhr.open('POST', apiURL('/media')); xhr.setRequestHeader('Authorization', 'Bearer ' + S.token); xhr.timeout = 120000;
       xhr.upload.onprogress = e => { if (e.lengthComputable && host.isConnected) host.querySelector('progress').value = Math.round(e.loaded * 100 / e.total); };
       xhr.onload = () => { let d; try { d = JSON.parse(xhr.responseText); } catch { return reject(new Error('upload_failed')); } xhr.status < 300 && d.ok ? resolve(d.data.media) : reject(new Error(d.error || 'upload_failed')); };
       xhr.onerror = () => reject(new Error(t('offline'))); xhr.ontimeout = () => reject(new Error('telegram_network_error')); xhr.send(form);
@@ -311,7 +311,7 @@ ACTIONS.vJobAction = async d => {
   await api(`/broadcast/${d.id}/${d.action}`, { method: 'POST' }); await loadHistory();
 };
 
-const V_TABS = [ ['overview','layout-grid',null,['نمای کلی','Overview']], ['catalog','package','catalog',['محصولات','Catalog']], ['orders','shopping-bag','shop',['سفارش‌ها','Orders']], ['coupons','ticket-percent','shop',['تخفیف‌ها','Discounts']], ['channel','calendar-clock','channel',['انتشار خودکار','Publishing']], ['groups','shield-check','moderation',['گروه‌ها','Groups']], ['relay','copy','relay',['حذف فوروارد','Relay']], ['crm','trophy','crm',['باشگاه مشتریان','Loyalty']], ['faq','messages-square','faq',['پرسش و پاسخ','FAQ']], ['media','folder-open',null,['رسانه‌ها','Media']] ];
+const V_TABS = [ ['overview','layout-grid',null,['نمای کلی','Overview']], ['services','network','services',['سرویس / VPN','Services / VPN']], ['catalog','package','catalog',['محصولات','Catalog']], ['orders','shopping-bag','shop',['سفارش‌ها','Orders']], ['coupons','ticket-percent','shop',['تخفیف‌ها','Discounts']], ['channel','calendar-clock','channel',['انتشار خودکار','Publishing']], ['groups','shield-check','moderation',['گروه‌ها','Groups']], ['relay','copy','relay',['حذف فوروارد','Relay']], ['crm','trophy','crm',['باشگاه مشتریان','Loyalty']], ['faq','messages-square','faq',['پرسش و پاسخ','FAQ']], ['media','folder-open',null,['رسانه‌ها','Media']] ];
 function renderStudio() {
   const tabs = V_TABS.filter(t=>!t[2] || vHas(t[2])); if (!tabs.some(t=>t[0] === V2.tab)) V2.tab = 'overview';
   const p = V2.settings?.purposes?.[V2.settings?.botPurpose];
@@ -325,7 +325,7 @@ function vPagination(data) { return `<div class="flex justify-between items-cent
 async function loadStudio() {
   const tab = V2.tab, host = $('v-studio-body'); if (!host) return;
   try {
-    const html = await ({ overview: studioOverview, catalog: studioCatalog, orders: studioOrders, coupons: studioCoupons, channel: studioChannel, groups: studioGroups, relay: studioRelay, crm: studioCRM, faq: studioFAQ, media: studioMedia })[tab]();
+    const html = await ({ overview: studioOverview, catalog: studioCatalog, orders: studioOrders, coupons: studioCoupons, channel: studioChannel, groups: studioGroups, relay: studioRelay, crm: studioCRM, faq: studioFAQ, media: studioMedia, services: studioServices })[tab]();
     if (S.route === 'studio' && V2.tab === tab && $('v-studio-body')) { $('v-studio-body').innerHTML = html; refreshIcons(); paintDropdowns(); if (tab === 'channel') loadHistory(); }
   } catch(e) { if (host.isConnected) host.innerHTML = vNote(esc(vError(e.message)),true) + '<div class="mt-4">' + vButton(t('refresh'),'vReload') + '</div>'; }
 }
@@ -333,7 +333,7 @@ async function studioOverview() {
   const d = await api('/studio/summary'); V2.summary = d;
   const c = d.counts;
   const tiles = [ ['catalog','package',c.products,L('محصول و فایل','Products & files'),'catalog'], ['orders','shopping-bag',c.orders,L('سفارش ثبت‌شده','Orders'),'shop'], ['orders','scan-line',c.review,L('در انتظار بررسی پرداخت','Payments to review'),'shop'], ['groups','shield-check',c.groups,L('گروه فعال','Active groups'),'moderation'], ['channel','rss',c.feeds,L('منبع خودکار','Automatic sources'),'channel'], ['relay','copy',c.relay,L('پیام منتظر تأیید','Messages to approve'),'relay'] ].filter(t=>vHas(t[4]));
-  return `<div class="v-grid v-stagger">${tiles.map(a=>`<button data-act="vTab" data-id="${a[0]}" class="${CLS.card} p-5 text-start"><span class="v-icon">${vIcon(a[1])}</span><div class="text-2xl font-extrabold mt-4">${fmtNum(a[2])}</div><p class="v-meta">${a[3]}</p></button>`).join('')}</div><div class="mt-5">${vSection(L('مسیر راه‌اندازی','Getting started'),`<div class="space-y-4">${[[1,L('نوع ربات را انتخاب کنید','Choose a bot type'),L('در تنظیمات، هدف ربات و قفل‌های عضویت را مشخص کنید.','Configure the bot type and membership gates in Settings.')],[2,L('اتصال و رسانه را آماده کنید','Connect Telegram and media'),L('توکن، وب‌هوک و چت آپلود را تنظیم کنید. سپس تست اتصال بگیرید.','Configure the token, webhook and upload chat, then test the connection.')],[3,L('محتوای واقعی خود را اضافه کنید','Add your own content'),L('محصول، فایل، منبع خبر یا قوانین گروه را از زبانه‌های بالا بسازید.','Create products, upload files, add feeds or configure group rules.')]].map(([n,title,desc])=>`<div class="flex gap-4"><span class="v-icon shrink-0 text-sm font-bold">${n}</span><div><h4 class="text-sm font-semibold">${title}</h4><p class="v-meta">${desc}</p></div></div>`).join('')}</div>`,vButton(t('settings'),'nav','data-to="settings"'))}</div><div class="mt-4">${vNote(L('این پنل یک توکن/یک ربات در هر استقرار مدیریت می‌کند. برای چند ربات مستقل، Worker جدا با همان کد بسازید. تغییر نوع، ربات جدیدی در BotFather نمی‌سازد.', 'Each deployment manages one token / one bot. Deploy a separate Worker for each independent bot. Switching a type does not create a new BotFather bot.'))}</div>`;
+  return `<div class="v-grid v-stagger">${tiles.map(a=>`<button data-act="vTab" data-id="${a[0]}" class="${CLS.card} p-5 text-start"><span class="v-icon">${vIcon(a[1])}</span><div class="text-2xl font-extrabold mt-4">${fmtNum(a[2])}</div><p class="v-meta">${a[3]}</p></button>`).join('')}</div><div class="mt-5">${vSection(L('مسیر راه‌اندازی','Getting started'),`<div class="space-y-4">${[[1,L('نوع ربات را انتخاب کنید','Choose a bot type'),L('در تنظیمات، هدف ربات و قفل‌های عضویت را مشخص کنید.','Configure the bot type and membership gates in Settings.')],[2,L('اتصال و رسانه را آماده کنید','Connect Telegram and media'),L('توکن، وب‌هوک و چت آپلود را تنظیم کنید. سپس تست اتصال بگیرید.','Configure the token, webhook and upload chat, then test the connection.')],[3,L('محتوای واقعی خود را اضافه کنید','Add your own content'),L('محصول، فایل، منبع خبر یا قوانین گروه را از زبانه‌های بالا بسازید.','Create products, upload files, add feeds or configure group rules.')]].map(([n,title,desc])=>`<div class="flex gap-4"><span class="v-icon shrink-0 text-sm font-bold">${n}</span><div><h4 class="text-sm font-semibold">${title}</h4><p class="v-meta">${desc}</p></div></div>`).join('')}</div>`,vButton(t('settings'),'nav','data-to="settings"'))}</div><div class="mt-4">${vNote(L('از «ربات‌های من» می‌توانید ربات‌های مستقل با فضای داده جدا اضافه کنید. نوار بالای پنل ربات جاری را نشان می‌دهد. تغییر نوع به‌تنهایی ربات جدید BotFather نمی‌سازد.', 'Use My bots to add independent bots with isolated storage. The top bar identifies the bot being managed. Switching a type does not create a new BotFather bot.'))}</div>`;
 }
 async function studioCatalog() {
   const [p,c] = await Promise.all([api('/studio/products?offset='+V2.offset),api('/studio/categories')]); V2.cache.products = p.rows; V2.cache.categories = c.rows;

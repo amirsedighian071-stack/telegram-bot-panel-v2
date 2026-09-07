@@ -10,3 +10,8 @@ ALLOW_DEFAULT_PASSWORD=true
 # MEDIA_PROCESSOR_SECRET=
 # PUBLIC_BASE_URL=https://your-v2-worker.workers.dev
 # ZARINPAL_SANDBOX=false
+
+# Services / VPN module: use a distinct strong Cloudflare secret in production.
+# VAULT_KEY=<at-least-32-random-characters>
+# Optional nightly encrypted R2 backups:
+# BACKUP_PASSWORD=<at-least-12-characters>

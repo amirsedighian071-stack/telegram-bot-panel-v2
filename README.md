@@ -1,16 +1,38 @@
 # BotPanel v2 — کارگاه ساخت ربات تلگرام
 
-پنل فارسی/انگلیسی برای **یک ربات تلگرام در هر استقرار**، با ۱۲ حالت کاری و ابزارهای اختصاصی کانال، فروشگاه، گروه، حذف فوروارد و محتوای آموزشی.
+پنل فارسی/انگلیسی با **یک ربات اصلی و ربات‌های مستقلِ مدیریت‌شده**، با ۱۳ حالت کاری و ابزارهای اختصاصی کانال، فروشگاه، گروه، حذف فوروارد و محتوای آموزشی.
 
 **مخزن v2:** https://github.com/amirsedighian071-stack/telegram-bot-panel-v2
 
 - [راهنمای کامل قابلیت‌ها و محدودیت‌ها](V2_GUIDE.fa.md)
 - [راه‌اندازی و استقرار روی Cloudflare](DEPLOY.fa.md)
 
+
+## نسخه ۳ — خدمات و مینی‌اپ مشتری
+
+بر اساس بررسی قابلیت‌های [Faoxima](https://github.com/Mmd-Amir/Faoxima)، یک ماژول **بومی Cloudflare Workers** اضافه شده است؛ PHP/MySQL پروژه مرجع کپی نشده‌اند.
+
+- پنل‌های Marzban/Marzneshin، انواع x-ui/Alireza، S-UI، Hiddify، WGDashboard، MikroTik، IBSng، Guard و انبار دستی، با قراردادهای مشخص API.
+- مینی‌اپ فارسی/انگلیسی، کیف پول با ثبت تراکنشی، نمایندگی اعتباری، قیمت سفارشی، تست، خرید چندتایی و انبار کانفیگ مستقل.
+- ساخت، تمدید، حجم/زمان اضافه، درخواست انتقال/تغییر موقعیت/استرداد و تطبیق نتایج نامشخص بدون کسر یا ساخت تکراری.
+- فیش دستی، زرین‌پال، آقای پرداخت، زرین‌پی، NOWPayments، Plisio، Stars و استعلام TRON/TON با Memo فاکتور.
+- کد هدیه/تخفیف، کش‌بک و پورسانت، گردونه/قرعه‌کشی، QR و کارت مصرف، لینک تجمیعی، خروجی Excel/CSV و پشتیبان رمزگذاری‌شده.
+- «ربات‌های من» برای چند ربات با توکن، وب‌هوک و SQLite جدا؛ زمینهٔ ربات جاری بالای پنل مشخص است.
+
+**[راهنمای نسخه ۳، پیش‌نیازها، جدول سازگاری و موارد باقی‌مانده](docs/FAOXIMA-CLOUDFLARE.fa.md)**
+
+این نسخه **برابری صددرصد با همه گزینه‌های قدیمی Faoxima نیست**. gatewayهای قدیمی IRanpay/Swap/TetraPay/Perfect Money/FloyPay، نرخ‌گیری بازار خودکار و بعضی گردش‌های جانبی هنوز معادل کامل ندارند. اتصال زنده به حساب‌ها و پنل‌های شما، بدون تنظیم آدرس و اعتبارنامه آنها قابل تأیید نیست.
+
+برای اطلاعات اتصال خدمات، secret جدید `VAULT_KEY` لازم است. برای R2 شبانه، `BACKUPS` و `BACKUP_PASSWORD` اختیاری‌اند. راهنمای بالا را قبل از استفاده مالی بخوانید.
+
+![مدیریت خدمات بومی Cloudflare](assets/screens/v3-services-admin-fa.png)
+
+[نمای مینی‌اپ مشتری با داده آزمایشی](assets/screens/v3-customer-portal-fa.png)
+
 ## تازه‌های نسخه ۲
 
 - **آپلود مستقیم با دو دکمه «افزودن عکس» و «افزودن فایل»**، کشیدن و رهاکردن، پیشرفت آپلود و استفاده مجدد از فایل‌های تلگرام؛ بدون نیاز به لینک عمومی.
-- تنظیم «**ربات برای چه کاری باشد؟**»: سفارشی، کانال، فروشگاه، گروه، بی‌نام‌ساز، کتابخانه، آموزش، پشتیبانی، FAQ، مسابقه، خبرخوان و باشگاه محتوای قفل‌دار.
+- تنظیم «**ربات برای چه کاری باشد؟**»: خدمات VPN، سفارشی، کانال، فروشگاه، گروه، بی‌نام‌ساز، کتابخانه، آموزش، پشتیبانی، FAQ، مسابقه، خبرخوان و باشگاه محتوای قفل‌دار.
 - مخفی‌کردن ابزارهای نامرتبط و تغییر واقعی رفتار ربات بر اساس نوع انتخاب‌شده، بدون پاک‌کردن اطلاعات قبلی.
 - قفل عضویت چند کانال/گروه، عمومی یا مخصوص هر نوع ربات؛ خطای تلگرام دسترسی را باز نمی‌کند.
 - محصولات، دسته‌بندی با دکمه شیشه‌ای، دیپ‌لینک ثابت، سبد خرید، تخفیف، موجودی رزروشده و تحویل دستی/آماده/فیزیکی.
@@ -67,7 +89,7 @@ npm run test:ui
 - برای زرین‌پال: merchant و نشانی عمومی Worker.
 - برای تبدیل/فشرده‌سازی/واترمارک **ویدیو**: سرویس پردازش خارجی با قرارداد مستند در راهنما. این مخزن **خود سرویس FFmpeg یا زیرساخت آن را راه‌اندازی نمی‌کند**.
 
-**مرز قابلیت‌ها:** واترمارک عکس‌های آپلود پنل در مرورگر اجرا می‌شود. فیش بانکی تصویری خودکار معتبر شناخته نمی‌شود. سایر درگاه‌های بانکی و رمزارزها، تشخیص قطعی اکانت مخرب و تضمین بدون‌قطعی در این نسخه ارائه نشده‌اند.
+**مرز قابلیت‌ها:** واترمارک عکس‌های آپلود پنل در مرورگر اجرا می‌شود. فیش بانکی تصویری خودکار معتبر شناخته نمی‌شود. درگاه‌های اضافه و رمزارزها در ماژول خدمات نسخه ۳ ارائه شده‌اند، نه در گردش فروشگاه عمومی v2؛ تشخیص قطعی اکانت مخرب و تضمین بدون‌قطعی ارائه نشده‌اند.
 
 ## بهبودهای رابط در ۲٫۰٫۱
 
@@ -88,6 +110,6 @@ npm run test:ui
 
 ### English
 
-A bilingual Telegram bot workspace with 12 purpose presets, direct media uploads, catalog/checkout, manually reviewed bank receipts, optional server-verified Zarinpal payments, durable scheduling, RSS/Atom publishing, group moderation, clean-copy relaying, loyalty and learning progress.
+A bilingual Telegram bot workspace with 13 purpose presets, direct media uploads, catalog/checkout, manually reviewed bank receipts, optional server-verified Zarinpal payments, durable scheduling, RSS/Atom publishing, group moderation, clean-copy relaying, loyalty and learning progress.
 
-One deployment manages one Telegram bot. Cloudflare Durable Objects provide coordinated SQLite state; the legacy KV binding is read-only for migration. Production credentials, deployment and external media processing are separate setup steps. See the Persian guides above for exact capabilities, limits, environment variables and integration contracts.
+One deployment supports a primary bot and isolated managed bots. Cloudflare Durable Objects provide coordinated SQLite state; the legacy KV binding is read-only for migration. Production credentials, deployment and external media processing are separate setup steps. See the Persian guides above for exact capabilities, limits, environment variables and integration contracts.

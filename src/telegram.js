@@ -1,3 +1,5 @@
+import { serviceMessage, serviceCallback, serviceHome, serviceError } from './services/bot.js';
+import { starsPreCheckout, starsSuccessful } from './services/payments.js';
 
 import {
   getMenu, getSettings, getUser, putUser, bumpStats, pushRecentUser,
@@ -166,6 +168,7 @@ export const channelJoinUrl = joinUrl;
 export const channelGate = membershipGate;
 function systemRows(settings, lang) {
   const rows = [], cb = (label, value) => ({ text: label, type: 'callback', value });
+  if (enabled(settings, 'services')) rows.push([cb(tr('📡 خرید و مدیریت سرویس', '📡 VPN services', lang), 'vpn:home'), cb(tr('🌐 مینی‌اپ مشتری', '🌐 Customer portal', lang), 'vpn:portal')]);
   if (enabled(settings, 'catalog')) rows.push([cb(tr('📚 محصولات و دسته‌بندی‌ها', '📚 Catalog & categories', lang), 'cat:all:0')]);
   if (enabled(settings, 'shop')) rows.push([cb(tr('🛒 سبد خرید', '🛒 Cart', lang), 'cart:show'), cb(tr('📦 سفارش‌های من', '📦 My orders', lang), 'orders:mine')]);
   if (enabled(settings, 'learning')) rows.push([cb(tr('🎓 پیشرفت من', '🎓 My progress', lang), 'learn:progress')]);
@@ -183,6 +186,8 @@ export async function sendStart(token, chatId, user, menu, lang, settings) {
 }
 function langKeyboard() { return { inline_keyboard: [[{ text: 'فارسی 🇮🇷', callback_data: 'setlang:fa' }, { text: 'English 🇬🇧', callback_data: 'setlang:en' }]] }; }
 async function deepStart(env, token, user, settings, lang, param) {
+  if (param === 'svc_phone' && enabled(settings, 'services')) { await serviceCallback(env, user, lang, 'vpn:phone'); return true; }
+  if (param === 'svc_portal' && enabled(settings, 'services')) { await serviceCallback(env, user, lang, 'vpn:portal'); return true; }
   if (param?.startsWith('p_') && enabled(settings, 'catalog')) { await showProduct(env, token, user, settings, lang, param.slice(2)); return true; }
   if (param?.startsWith('fb_') && enabled(settings, 'broadcast')) {
     const post = await getPost(env, param.slice(3)); if (!post?.feedback) return false;
@@ -201,7 +206,9 @@ export async function handleUpdate(env, update) {
   if (duplicateKey && await getJson(env, duplicateKey)) return;
   const token = await resolveToken(env); if (!token) return;
   const settings = await getSettings(env);
-  if (update.my_chat_member || update.chat_member) await groupMemberUpdate(env, token, update, settings);
+  if (update.pre_checkout_query && await starsPreCheckout(env, update.pre_checkout_query)) {}
+  else if (update.message?.successful_payment && await starsSuccessful(env, update.message)) {}
+  else if (update.my_chat_member || update.chat_member) await groupMemberUpdate(env, token, update, settings);
   else if (update.channel_post) await channelPost(env, token, update.channel_post, settings);
   else if (update.message || update.edited_message) await onMessage(env, update.message || update.edited_message, token, settings);
   else if (update.callback_query) await onCallback(env, update.callback_query, token, settings);
@@ -226,6 +233,7 @@ async function onMessage(env, msg, token, settings) {
   const menu = await getMenu(env);
   if (cmd === '/cancel' || cmd === '/end') { user.flow = null; user.supportOpen = false; await putUser(env, user); return sendToUser(token, chatId, T.supportClosed); }
   try {
+    if (await serviceMessage(env, user, lang, msg)) return;
     if (!cmd && await commerceMessage(env, token, user, settings, lang, msg)) return;
     if (!cmd && user.flow?.type === 'feedback' && text && enabled(settings, 'broadcast')) {
       await ticketAppendUser(env, user, `[Post ${user.flow.postId}] ${text}`); user.flow = null; await putUser(env, user); return sendToUser(token, chatId, T.supportSent);
@@ -236,7 +244,7 @@ async function onMessage(env, msg, token, settings) {
     }
     if (cmd) {
       switch (cmd) {
-        case '/start': { const param = user.pendingStart; user.pendingStart = ''; await putUser(env, user); if (await deepStart(env, token, user, settings, lang, param)) return; return sendStart(token, chatId, user, menu, lang, settings); }
+        case '/start': { const param = user.pendingStart; user.pendingStart = ''; await putUser(env, user); if (await deepStart(env, token, user, settings, lang, param)) return; if (settings.botPurpose === 'vpn') return serviceHome(env, user, lang); return sendStart(token, chatId, user, menu, lang, settings); }
         case '/id': return sendToUser(token, chatId, `${T.yourId} ${user.id}`);
         case '/ping': return sendToUser(token, chatId, T.pong);
         case '/help': return sendToUser(token, chatId, renderTpl(menu.help[lang] || menu.help.fa, user) + '\n\n' + (enabled(settings, 'catalog') ? '/catalog\n' : '') + (enabled(settings, 'shop') ? '/cart · /orders\n' : '') + (enabled(settings, 'crm') ? '/ref · /points\n' : '') + (enabled(settings, 'learning') ? '/progress\n' : '') + '/cancel');
@@ -252,7 +260,7 @@ async function onMessage(env, msg, token, settings) {
     }
     if (!cmd && await relayMessage(env, token, msg, user, settings, lang)) return;
     if (!cmd && settings.botPurpose === 'support' && text) { await ticketAppendUser(env, user, text); return sendToUser(token, chatId, T.supportSent); }
-  } catch (e) { return sendToUser(token, chatId, checkoutError(e.message, lang) + '\n/cancel'); }
+  } catch (e) { return sendToUser(token, chatId, (enabled(settings, 'services') && (user.flow?.type?.startsWith('svc_') || /^\/(vpn|wallet|agent|wheel|giftcode|testvpn)/.test(text)) ? serviceError(e.message, lang) : checkoutError(e.message, lang)) + '\n/cancel'); }
   return sendToUser(token, chatId, T.unknown);
 }
 async function showPage(token, chatId, messageId, menu, pageId, lang, settings, user) {
@@ -282,6 +290,7 @@ async function onCallback(env, cb, token, settings) {
   if (Number(chatId) < 0) return answer(tr('این بخش را در گفتگوی خصوصی ربات باز کنید.', 'Open this feature in a private chat with the bot.', lang), true);
   const menu = await getMenu(env);
   try {
+    if (await serviceCallback(env, user, lang, data)) return answer();
     if (await commerceCallback(env, token, user, settings, lang, data)) return answer();
     if (data === 'crm:points' && enabled(settings, 'crm')) { await showPoints(env, token, user, settings, lang); return answer(); }
     if (data.startsWith('learn:') && enabled(settings, 'learning')) {
@@ -299,6 +308,6 @@ async function onCallback(env, cb, token, settings) {
     if (data.startsWith('sub:') && enabled(settings, 'menu')) { await showPage(token, chatId, messageId, menu, data.slice(4), lang, settings, user); return answer(); }
     if (data.startsWith('txt:') && enabled(settings, 'menu')) { const [, src, r, c] = data.split(':'); const rows = src === 'root' ? menu.inlineButtons : menu.submenus?.[src]?.buttons || []; const btn = rows[+r]?.[+c]; return answer(btn?.type === 'text' ? String(btn.value).slice(0, 200) : '…', true); }
     if (data === 'support:open' && enabled(settings, 'support')) { user.supportOpen = true; user.flow = null; await putUser(env, user); await sendToUser(token, chatId, T.supportIntro); return answer(); }
-  } catch (e) { return answer(checkoutError(e.message, lang), true); }
+  } catch (e) { return answer(data.startsWith('vpn:') ? serviceError(e.message, lang) : checkoutError(e.message, lang), true); }
   return answer(tr('این بخش در نوع فعلی ربات فعال نیست.', 'This feature is disabled for this bot type.', lang), true);
 }

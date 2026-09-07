@@ -1,6 +1,6 @@
 {
   "name": "telegram-bot-panel-v2",
-  "version": "2.0.1",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "description": "پنل چندمنظوره دو زبانه ربات تلگرام روی Cloudflare Workers و Durable Objects (SQLite)",
@@ -11,11 +11,15 @@
     "smoke": "node scripts/smoke.mjs",
     "build": "node scripts/build-panel.mjs",
     "test": "node --test tests/*.test.mjs",
-    "test:ui": "node tests/browser.mjs"
+    "test:ui": "node tests/browser.mjs",
+    "test:services-ui": "node tests/services-browser.mjs"
   },
   "dependencies": {
+    "@noble/curves": "^2.4.0",
     "fast-xml-parser": "^5.11.1",
-    "hono": "^4.13.7"
+    "fflate": "^0.8.3",
+    "hono": "^4.13.7",
+    "qrcode-generator": "^2.0.4"
   },
   "devDependencies": {
     "@fontsource/vazirmatn": "^5.3.0",

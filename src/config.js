@@ -1,6 +1,7 @@
-export const MODULES = ['catalog', 'shop', 'channel', 'moderation', 'relay', 'crm', 'faq', 'learning', 'broadcast', 'support', 'menu'];
+export const MODULES = ['catalog', 'shop', 'channel', 'moderation', 'relay', 'crm', 'faq', 'learning', 'broadcast', 'support', 'menu', 'services'];
 
 export const PURPOSES = {
+  vpn: { fa: 'فروش و مدیریت سرویس VPN', en: 'VPN services & customer portal', icon: 'network', modules: ['services', 'crm', 'broadcast', 'support', 'menu'], desc: 'مینی‌اپ، پنل‌های VPN، کیف پول، نمایندگی و انبار کانفیگ' },
   custom: { fa: 'پیش‌فرض / سفارشی', en: 'Custom workspace', icon: 'sliders-horizontal', modules: MODULES, desc: 'همه ابزارها؛ انتخاب و شخصی‌سازی آزاد' },
   channel: { fa: 'مدیریت کانال', en: 'Channel manager', icon: 'radio', modules: ['catalog', 'channel', 'moderation', 'crm', 'broadcast', 'support', 'menu'], desc: 'انتشار، زمان‌بندی، محصولات، دسته‌بندی و تعامل' },
   shop: { fa: 'فروشگاه', en: 'Store', icon: 'shopping-bag', modules: ['catalog', 'shop', 'crm', 'broadcast', 'support', 'menu'], desc: 'محصول، سبد خرید، پرداخت، سفارش و تحویل' },
@@ -58,9 +59,11 @@ export function urlButtons(input) {
 
 export function mergeV2Settings(s) {
   const d = structuredClone(V2_DEFAULTS);
+  const oldModules = MODULES.filter(m => m !== 'services');
+  if ((!s.schemaVersion || s.schemaVersion < 3) && Array.isArray(s.customModules) && oldModules.every(m => s.customModules.includes(m))) s.customModules = [...new Set([...s.customModules, 'services'])];
   const legacy = s.requiredChannel?.enabled && s.requiredChannel?.chatId;
   return {
-    ...d, ...s,
+    ...d, ...s, schemaVersion: 3,
     botPurpose: validPurpose(s.botPurpose) ? s.botPurpose : 'custom',
     requiredChats: s.requiredChats || (legacy ? { enabled: true, targets: [{ chatId: s.requiredChannel.chatId, url: s.requiredChannel.url || '', title: '', scope: 'all' }] } : d.requiredChats),
     uploads: { ...d.uploads, ...s.uploads, watermark: { ...d.uploads.watermark, ...s.uploads?.watermark } },

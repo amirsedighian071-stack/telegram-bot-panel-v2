@@ -39,6 +39,7 @@ r.put('/', async (c) => {
   const settings = await getSettings(env);
 
   if (typeof body.botToken === 'string' && body.botToken.trim()) {
+    assert(!env.MANAGED_BOT_ID, 'managed_token_change_use_manager');
     assert(/^\d+:[A-Za-z0-9_-]+$/.test(body.botToken.trim()), 'invalid_bot_token');
     if (settings.botToken !== body.botToken.trim()) settings.botUsername = '';
     settings.botToken = body.botToken.trim();
@@ -92,15 +93,16 @@ r.post('/webhook', async (c) => {
     res = await tgApi(token, 'deleteWebhook', { drop_pending_updates: false });
   } else {
     if (!env.WEBHOOK_SECRET) return fail(c, 'webhook_secret_missing');
-    const url = `${new URL(c.req.url).origin}/telegram/webhook`;
+    const publicBase = env.MANAGED_BASE_URL || new URL(c.req.url).origin;
+    const url = `${publicBase}/telegram/webhook`;
     res = await tgApi(token, 'setWebhook', {
       url,
       secret_token: env.WEBHOOK_SECRET,
-      allowed_updates: ['message', 'edited_message', 'callback_query', 'channel_post', 'my_chat_member', 'chat_member'],
+      allowed_updates: ['message', 'edited_message', 'callback_query', 'channel_post', 'my_chat_member', 'chat_member', 'pre_checkout_query'],
       drop_pending_updates: false,
     });
     if (res.ok) {
-      const settings = await getSettings(env); settings.publicBaseUrl = new URL(c.req.url).origin; await saveSettings(env, settings);
+      const settings = await getSettings(env); settings.publicBaseUrl = publicBase; await saveSettings(env, settings);
       return c.json({ ok: true, data: { url, result: res.result } });
     }
   }

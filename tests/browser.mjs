@@ -48,8 +48,8 @@ try {
   success('Login and SQLite-backed API');
 
   await navigate('settings'); await page.waitForSelector('#v-profile-cards');
-  assert.equal(await page.locator('.v-profile').count(), 12);
-  assert.equal(await page.locator('html').getAttribute('data-panel-version'), '2.0.1');
+  assert.equal(await page.locator('.v-profile').count(), 13);
+  assert.equal(await page.locator('html').getAttribute('data-panel-version'), '3.0.0');
   await page.locator('.v-profile[data-id="channel"]').click();
   assert((await page.locator('#v-purpose-preview').innerText()).includes('دیپ‌لینک'));
   assert.equal(await page.locator('.v-profile[data-id="channel"]').getAttribute('aria-pressed'), 'true');
