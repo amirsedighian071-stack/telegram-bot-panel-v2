@@ -17,6 +17,7 @@ const P = {
   authGeneration: 0,
   urls: new Set(),
   busy: false,
+  support: null,
   filter: { category: "", location: "" },
 };
 const el = (id) => document.getElementById(id),
@@ -81,6 +82,14 @@ const chip = (s) =>
   `<span class="chip ${["active", "paid", "done"].includes(s) ? "good" : ["pending", "review", "receipt_review", "queued", "on_hold", "sending"].includes(s) ? "warn" : ["failed", "rejected"].includes(s) ? "bad" : ""}">${status(s)}</span>`;
 function errorText(code) {
   const dict = {
+    support_disabled: T(
+      "پشتیبانی در این ربات فعال نیست.",
+      "Support is not enabled for this bot.",
+    ),
+    support_message_required: T(
+      "متن پیام را بنویسید.",
+      "Write your message first.",
+    ),
     dice_disabled: T("تاس فعال نیست.", "Dice is disabled."),
     dice_cooldown: T(
       "هنوز زمان نوبت بعدی نرسیده است.",
@@ -361,7 +370,7 @@ function shell(content) {
           ]
             .map(
               ([id, icon, label]) =>
-                `<button type="button" data-action="nav" data-tab="${id}" class="${P.tab === id ? "active" : ""}" aria-current="${P.tab === id ? "page" : "false"}"><span>${icon}</span><span>${label}</span></button>`,
+                `<button type="button" data-action="nav" data-tab="${id}" class="${P.tab === id || (id === "help" && P.tab === "support") ? "active" : ""}" aria-current="${P.tab === id ? "page" : "false"}"><span>${icon}</span><span>${label}${id === "help" && P.data?.support?.unread ? `<span class="nav-badge">${num(P.data.support.unread, 0)}</span>` : ""}</span></button>`,
             )
             .join("")}</div></nav>`
         : ""
@@ -425,6 +434,7 @@ async function renderPage() {
       wallet: walletPage,
       rewards: rewardsPage,
       help: helpPage,
+      support: supportPage,
     }[tab]();
     if (P.tab === tab && el("portal-view")) el("portal-view").innerHTML = body;
   } catch (e) {
@@ -514,8 +524,44 @@ async function rewardsPage() {
   const r = await api("/raffles");
   return `<section class="hero"><div class="eyebrow">MEMBER REWARDS</div><h2>${T("هدیه برای همراهی شما", "Rewards for being here")}</h2><p>${T("هدیه‌ها به اعتبار قابل استفاده در فروشگاه اضافه می‌شوند.", "Rewards add credit usable in this service store.")}</p></section><div class="section-head"><h2>${T("کد هدیه", "Gift code")}</h2></div><section class="card"><p class="muted small">${T("کد هدیه دارید؟ آن را در کیف پول فعال کنید.", "Have a gift code? Redeem it for wallet credit.")}</p><div class="actions">${button(T("ثبت کد هدیه", "Redeem code"), "gift", "", "primary")}</div></section>${portalDiceCard()}${P.data.settings.wheel.enabled ? `<div class="section-head"><h2>${T("گردونه", "Reward wheel")}</h2></div><section class="card"><div class="prize-ring" id="prize-ring">✦</div><p class="between small"><span>${T("هزینه هر چرخش", "Cost per spin")}: ${money(P.data.settings.wheel.fee)}</span><span>${P.data.settings.wheel.dailySpins} ${T("بار در روز", "per day")}</span></p><div class="actions">${button(T("مشاهده و تأیید چرخش", "Review & confirm spin"), "wheelConfirm", "", "primary")}</div></section>` : ""}<div class="section-head"><h2>${T("قرعه‌کشی‌های رایگان", "Free raffles")}</h2></div>${r.rows.map((r) => `<section class="card"><div class="between"><b>${esc(r.title)}</b><span class="chip">${r.status === "drawn" ? T("انجام شده", "Drawn") : T("باز", "Open")}</span></div><p class="hint">${date(r.closesAt)} · ${num(r.entriesCount)} ${T("شرکت‌کننده", "entries")}</p><p class="small">${T("جوایز", "Prizes")}: ${r.prizes.map(money).join(" / ")}</p>${r.status === "open" ? `<div class="actions">${r.joined ? '<span class="chip good">' + T("شما ثبت‌نام کرده‌اید", "You joined") + "</span>" : button(T("شرکت رایگان", "Join for free"), "raffle", `data-id="${r.id}"`, "primary")}</div>` : `<p class="hint">${r.winners.some((w) => w.userId === String(P.data.user.id)) ? T("🎉 شما برنده شده‌اید؛ اعتبار در کیف پول ثبت شد.", "🎉 You won! Credit was added to your wallet.") : T("نتیجه ثبت شد و اعتبار برندگان واریز شده است.", "Results recorded; winners received wallet credit.")}</p>`}</section>`).join("") || empty(T("قرعه‌کشی فعالی وجود ندارد.", "No raffles are available."))}`;
 }
+// Live support desk: the message is filed as a panel ticket and the administrator
+// reply arrives here and in the Telegram chat.
+function supportBubbles(thread) {
+  if (!thread.messages.length)
+    return empty(
+      T(
+        "هنوز پیامی رد و بدل نشده است. اولین پیام خود را بفرستید.",
+        "No messages yet. Send your first message.",
+      ),
+      "✉",
+    );
+  return `<div class="support-thread">${thread.messages
+    .map(
+      (m) =>
+        `<div class="support-bubble ${m.from === "support" ? "from-support" : "from-me"}"><span class="support-who">${m.from === "support" ? T("پشتیبانی", "Support") : T("شما", "You")}</span><p>${esc(m.text)}</p><time>${date(m.at)}</time></div>`,
+    )
+    .join("")}</div>`;
+}
+function supportHTML(thread, enabled) {
+  const composer = enabled
+    ? `<form data-form="support" class="support-form"><label for="support-text">${T("پیام شما", "Your message")}</label><textarea id="support-text" rows="3" maxlength="2000" required placeholder="${T("مشکل یا سؤال خود را بنویسید…", "Describe your question or issue…")}"></textarea><div class="actions"><button type="submit" class="btn primary">${T("ارسال پیام", "Send message")}</button>${button(T("بروزرسانی گفتگو", "Refresh chat"), "supportReload")}</div></form>`
+    : notice(
+        T(
+          "پشتیبانی در این ربات غیرفعال است؛ با مدیر تماس بگیرید.",
+          "Support is disabled for this bot; contact the administrator.",
+        ),
+        "warn",
+      );
+  return `<section class="hero"><div class="eyebrow">SUPPORT DESK</div><h2>${T("گفتگو با پشتیبانی", "Chat with support")}</h2><p>${T("پیام شما در پنل مدیریت ثبت می‌شود و پاسخ، هم اینجا و هم در ربات تلگرام به شما می‌رسد.", "Your message is filed in the admin panel. The reply appears here and in the Telegram bot.")}</p></section>${thread.open ? "" : '<div style="margin-top:14px">' + notice(T("این گفتگو بسته شده است؛ با ارسال پیام جدید دوباره باز می‌شود.", "This conversation was closed; a new message reopens it."), "warn") + "</div>"}<div class="section-head"><h2>${T("پیام‌ها", "Messages")}</h2>${button("↻", "supportReload", "", "icon-button")}</div><section class="card">${supportBubbles(thread)}</section><section class="card" style="margin-top:14px">${composer}</section><div class="actions" style="margin-top:14px">${button(T("بازگشت به راهنما", "Back to help"), "nav", 'data-tab="help"')}${P.data.botUsername ? button(T("باز کردن ربات", "Open the bot"), "openBotChat") : ""}</div>`;
+}
+async function supportPage() {
+  const d = await api("/support");
+  P.support = d.support;
+  if (P.data?.support) P.data.support.unread = 0;
+  return supportHTML(d.support, d.enabled !== false);
+}
 async function helpPage() {
-  return `<section class="hero"><div class="eyebrow">HELP & SUPPORT</div><h2>${T("کنار شما هستیم", "We are here to help")}</h2><p>${T("راهنما، کلاینت‌ها و پشتیبانی خدمات", "Guides, client apps and service support")}</p><div class="actions" style="margin-top:18px">${button(T("💬 پشتیبانی ربات", "💬 Bot support"), "support", "", "primary")}${button(T("🤝 درخواست نمایندگی", "🤝 Reseller request"), "agent")}</div></section><div class="section-head"><h2>${T("کلاینت‌ها و راهنما", "Client apps & guides")}</h2></div>${P.data.settings.clientApps.map((a) => `<section class="card"><div class="between"><b>${esc(a.title)}</b><span class="chip">${esc(a.os)}</span></div><p class="hint">${esc(a.help)}</p><div class="actions"><a class="btn" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${T("دریافت برنامه", "Get app")} ↗</a></div></section>`).join("") || empty(T("مدیر هنوز راهنمای کلاینت اضافه نکرده است.", "No client guides have been added."))}<div class="divider"></div><section class="card"><h3>${T("حساب شما", "Your account")}</h3><p class="hint">${esc(P.data.user.name)} · ${esc(P.data.user.id)}</p><div class="actions">${button(T("خروج از نشست", "Sign out"), "logout", "", "danger")}</div></section>`;
+  return `<section class="hero"><div class="eyebrow">HELP & SUPPORT</div><h2>${T("کنار شما هستیم", "We are here to help")}</h2><p>${T("راهنما، کلاینت‌ها و پشتیبانی خدمات", "Guides, client apps and service support")}</p><div class="actions" style="margin-top:18px">${button(T("💬 گفتگو با پشتیبانی", "💬 Chat with support"), "support", "", "primary")}${button(T("🤝 درخواست نمایندگی", "🤝 Reseller request"), "agent")}</div></section><div class="section-head"><h2>${T("کلاینت‌ها و راهنما", "Client apps & guides")}</h2></div>${P.data.settings.clientApps.map((a) => `<section class="card"><div class="between"><b>${esc(a.title)}</b><span class="chip">${esc(a.os)}</span></div><p class="hint">${esc(a.help)}</p><div class="actions"><a class="btn" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${T("دریافت برنامه", "Get app")} ↗</a></div></section>`).join("") || empty(T("مدیر هنوز راهنمای کلاینت اضافه نکرده است.", "No client guides have been added."))}<div class="divider"></div><section class="card"><h3>${T("حساب شما", "Your account")}</h3><p class="hint">${esc(P.data.user.name)} · ${esc(P.data.user.id)}</p><div class="actions">${button(T("خروج از نشست", "Sign out"), "logout", "", "danger")}</div></section>`;
 }
 const actions = {
   closeModal,
@@ -541,8 +587,22 @@ const actions = {
     await bootstrap();
   },
   phone: () => openBot("svc_phone"),
-  support: () => {
-    if (P.data.botUsername) openTelegram("https://t.me/" + P.data.botUsername);
+  support: async () => {
+    P.tab = "support";
+    closeModal();
+    await renderPage();
+    window.scrollTo({ top: 0, behavior: "auto" });
+  },
+  supportReload: async () => {
+    if (P.tab !== "support") return;
+    const host = el("portal-view");
+    const d = await api("/support");
+    P.support = d.support;
+    if (host) host.innerHTML = supportHTML(d.support, d.enabled !== false);
+  },
+  openBotChat: () => {
+    if (P.data?.botUsername)
+      openTelegram("https://t.me/" + P.data.botUsername);
   },
   buy: (d) => {
     const p = P.plans.find((p) => p.id === d.id);
@@ -830,6 +890,20 @@ function openBot(payload) {
   );
 }
 const forms = {
+  support: async () => {
+    const text = val("support-text");
+    if (!text) return;
+    const d = await api("/support", { method: "POST", body: { text } });
+    P.support = d.support;
+    const host = el("portal-view");
+    if (host) host.innerHTML = supportHTML(d.support, true);
+    toast(
+      T(
+        "پیام شما برای پشتیبانی ثبت شد.",
+        "Your message was filed for the support team.",
+      ),
+    );
+  },
   quote: async () => {
     const body = {
       kind: val("buy-kind"),
@@ -976,9 +1050,23 @@ setInterval(async () => {
     !P.token ||
     !P.data?.gate.ok ||
     !el("portal-modal").hidden ||
-    !["services", "wallet"].includes(P.tab)
+    !["services", "wallet", "support"].includes(P.tab)
   )
     return;
+  if (P.tab === "support") {
+    try {
+      const d = await api("/support");
+      if (
+        JSON.stringify(d.support.messages) !==
+        JSON.stringify(P.support?.messages || [])
+      ) {
+        P.support = d.support;
+        const host = el("portal-view");
+        if (host) host.innerHTML = supportHTML(d.support, d.enabled !== false);
+      }
+    } catch {}
+    return;
+  }
   try {
     const data = await api("/operations");
     if (

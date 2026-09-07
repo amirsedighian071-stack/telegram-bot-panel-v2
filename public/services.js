@@ -1,7 +1,11 @@
 "use strict";
 MODULE_LABELS.services = ["فروش سرویس و مینی‌اپ", "Services & customer portal"];
-const SV = { tab: "overview", cache: {}, meta: null, edit: null, offset: 0 };
-const svAPI = (path, opts) => api("/services" + path, opts);
+const SV = { tab: "overview", cache: {}, meta: null, metaAt: 0, html: {}, edit: null, offset: 0 };
+const svAPI = (path, opts) => {
+  // Any mutation invalidates the rendered-tab cache so lists never show stale rows.
+  if (opts && opts.method && opts.method !== "GET") SV.html = {};
+  return api("/services" + path, opts);
+};
 const svBtn = (label, act, data = "", primary = false) =>
   vButton(label, act, data, primary);
 const svRows = (body) => `<div class="space-y-4">${body}</div>`;
@@ -259,9 +263,17 @@ const SV_TABS = [
   ["settings", "settings", ["تنظیمات", "Settings"]],
   ["backup", "archive", ["گزارش و پشتیبان", "Reports & backup"]],
 ];
+// The workspace shell paints immediately; the heavy tab body streams in afterwards.
+async function svMeta(force = false) {
+  if (!force && SV.meta && Date.now() - SV.metaAt < 60000) return SV.meta;
+  SV.meta = await svAPI("/bootstrap?counts=0");
+  SV.metaAt = Date.now();
+  return SV.meta;
+}
 async function studioServices() {
-  SV.meta = await svAPI("/bootstrap");
-  return `<div class="sv-workspace"><div class="sv-header"><div><span class="v-eyebrow">SERVICE COMMERCE / CLOUDFLARE</span><h3>${L("مرکز فروش و مدیریت سرویس", "Service management center")}</h3><p>${L("مینی‌اپ مشتری، کیف پول و ساخت سرویس با ثبت مالی هماهنگ", "Customer portal, coordinated wallet accounting and service provisioning")}</p></div><span class="v-badge ${SV.meta.ready.vault ? "good" : "warn"}">${SV.meta.ready.vault ? L("رمزگذاری اتصال آماده است", "Credential vault ready") : L("تنظیم VAULT_KEY لازم است", "VAULT_KEY required")}</span></div><nav class="v-tabs sv-tabs">${SV_TABS.map(([id, icon, label]) => `<button type="button" class="v-tab ${SV.tab === id ? "active" : ""}" data-act="svTab" data-tab="${id}">${vIcon(icon)}${label[S.lang === "en" ? 1 : 0]}</button>`).join("")}</nav><div id="sv-body">${await svContent()}</div></div>`;
+  await svMeta();
+  setTimeout(() => svRefresh(), 0);
+  return `<div class="sv-workspace"><div class="sv-header"><div><span class="v-eyebrow">SERVICE COMMERCE / CLOUDFLARE</span><h3>${L("مرکز فروش و مدیریت سرویس", "Service management center")}</h3><p>${L("مینی‌اپ مشتری، کیف پول و ساخت سرویس با ثبت مالی هماهنگ", "Customer portal, coordinated wallet accounting and service provisioning")}</p></div><div class="flex items-center gap-2 flex-wrap">${svBtn(L("باز/بستن همه بخش‌ها", "Expand / collapse all"), "secAll")}<span class="v-badge ${SV.meta.ready.vault ? "good" : "warn"}">${SV.meta.ready.vault ? L("رمزگذاری اتصال آماده است", "Credential vault ready") : L("تنظیم VAULT_KEY لازم است", "VAULT_KEY required")}</span></div></div><nav class="v-tabs sv-tabs">${SV_TABS.map(([id, icon, label]) => `<button type="button" class="v-tab ${SV.tab === id ? "active" : ""}" data-act="svTab" data-tab="${id}">${vIcon(icon)}${label[S.lang === "en" ? 1 : 0]}</button>`).join("")}</nav><div id="sv-body"><div class="v-skeleton"></div></div></div>`;
 }
 ACTIONS.svTab = async (d) => {
   SV.tab = d.tab;
@@ -271,19 +283,33 @@ ACTIONS.svTab = async (d) => {
     .forEach((b) => b.classList.toggle("active", b.dataset.tab === SV.tab));
   await svRefresh();
 };
+function svPaint(host, html) {
+  host.innerHTML = html;
+  refreshIcons();
+  paintDropdowns(host);
+}
 async function svRefresh() {
   const host = $("sv-body");
   if (!host) return;
+  const tab = SV.tab;
+  const cached = SV.html[tab + ":" + SV.offset];
+  const warm = cached && Date.now() - cached.at < 45000;
+  // A previously rendered tab is shown instantly and refreshed in the background.
+  if (warm) svPaint(host, cached.html);
+  else host.innerHTML = '<div class="v-skeleton"></div>';
   try {
-    host.innerHTML = '<div class="v-skeleton"></div>';
     const html = await svContent();
-    if (host.isConnected) {
-      host.innerHTML = html;
-      refreshIcons();
-      paintDropdowns();
-    }
+    if (SV.tab !== tab) return;
+    SV.html[tab + ":" + SV.offset] = { html, at: Date.now() };
+    const target = $("sv-body");
+    if (target && target.isConnected) svPaint(target, html);
   } catch (e) {
-    if (host.isConnected) host.innerHTML = vNote(esc(vError(e.message)), true);
+    const target = $("sv-body");
+    if (warm) toast(vError(e.message), "error");
+    else if (target && target.isConnected)
+      target.innerHTML =
+        vNote(esc(vError(e.message)), true) +
+        `<div class="mt-4">${svBtn(t("refresh"), "svRefresh")}</div>`;
   }
 }
 ACTIONS.svRefresh = () => svRefresh();
@@ -312,6 +338,7 @@ async function svContent() {
 }
 async function svOverview() {
   SV.meta = await svAPI("/bootstrap");
+  SV.metaAt = Date.now();
   const c = SV.meta.counts;
   return svRows(
     `<div class="v-grid v-stagger">${[
@@ -1332,7 +1359,9 @@ async function svSettings() {
   SV.cache.plans = p.rows;
   const s = d.settings;
   SV.logo = s.brand.logo || "";
-  return svRows(
+  // Long settings pages open collapsed so the tab paints instantly.
+  vSectionDefault(false);
+  const html = svRows(
     `${vSection(L("برند و مینی‌اپ مشتری", "Brand & customer Mini App"), `<div class="grid sm:grid-cols-2 gap-4">${vField("vs-name", L("نام فروشگاه", "Store name"), s.brand.name)}${vField("vs-name-en", "English name", s.brand.nameEn, 'dir="ltr"')}${vField("vs-mark", L("نشان کوتاه", "Short mark"), s.brand.mark, 'maxlength="3"')}${vField("vs-accent", L("رنگ اصلی HEX", "Accent HEX"), s.brand.accent, 'dir="ltr" placeholder="#38bdf8"')}${vField("vs-url", L("آدرس عمومی Worker بدون مسیر", "Public Worker URL without a path"), s.publicUrl, 'dir="ltr" placeholder="https://your-worker.workers.dev"')}${vField("vs-report", L("چت گزارش مدیر؛ اختیاری", "Administrator report chat; optional"), s.reportChat, 'dir="ltr"')}</div><div class="mt-4"><label class="v-field"><span>${L("لوگو؛ PNG/JPEG/WebP تا ۱۵۰ KB", "Logo; PNG/JPEG/WebP up to 150 KB")}</span><input id="vs-logo" type="file" accept="image/png,image/jpeg,image/webp"><span id="vs-logo-status" class="v-meta">${s.brand.logo ? L("لوگو ثبت شده است", "Logo saved") : ""}</span></label>${svBtn(L("حذف لوگو", "Remove logo"), "svRemoveLogo")}</div>${vCheck("vs-enabled", L("فروش خدمات فعال باشد", "Enable service sales"), s.enabled)}${vCheck("vs-maintenance", L("توقف موقت خرید جدید؛ سوابق و تعهدات باقی می‌مانند", "Pause new purchases; preserve records and existing obligations"), s.maintenance)}`, svBtn(L("ذخیره همه تنظیمات خدمات", "Save all service settings"), "svSettingsSave", "", true))}${vSection(L("قوانین، شماره و سفارش", "Rules, phone verification & orders"), vCheck("vs-phone", L("تأیید شماره با Contact تلگرام لازم باشد", "Require Telegram contact ownership verification"), s.phoneRequired) + vCheck("vs-iran", L("فقط شماره موبایل ایران", "Iranian mobile numbers only"), s.iranPhonesOnly) + vCheck("vs-customname", L("نام دلخواه سرویس مجاز باشد", "Allow custom service names"), s.customNames) + vArea("vs-rules", L("قوانین فارسی؛ خالی یعنی بدون مرحله پذیرش", "Rules in Persian; empty disables the acceptance step"), s.rules, 4) + vArea("vs-rules-en", "English rules", s.rulesEn, 3, 'dir="ltr"') + `<div class="grid sm:grid-cols-2 gap-4">${vSelect("vs-testplan", L("پلن تست", "Trial plan"), [["", L("بدون تست", "No trial")], ...p.rows.map((p) => [p.id, p.title])], s.testPlanId)}${vField("vs-testlimit", L("سهمیه تست هر کاربر", "Trials per customer"), s.testsPerUser, 'type="number" min="0" max="20"')}${vField("vs-open", L("حداکثر عملیات باز هر کاربر", "Max open operations per customer"), s.maxOpenOperations, 'type="number" min="1" max="10"')}${vField("vs-maxservices", L("حداکثر سرویس هر کاربر", "Max services per customer"), s.maxServices, 'type="number" min="1" max="10000"')}</div>`)}${vSection(
       L("مالی، معرفی و نمایندگی", "Finance, referrals & resellers"),
       `<div class="grid sm:grid-cols-2 gap-4">${[
@@ -1397,6 +1426,8 @@ async function svSettings() {
         ),
     )}<div class="flex justify-end">${svBtn(L("ذخیره همه تنظیمات", "Save all settings"), "svSettingsSave", "", true)}</div>`,
   );
+  vSectionDefault(true);
+  return html;
 }
 document.addEventListener("change", (e) => {
   if (e.target.id === "vs-logo") {
@@ -1493,9 +1524,12 @@ function svDownload(blob, name) {
 async function svBackup() {
   const cfg = (await svAPI("/settings")).settings;
   SV.cache.settings = cfg;
-  return svRows(
+  vSectionDefault(false);
+  const html = svRows(
     `${vSection(L("خروجی گزارش مالی", "Finance export"), `<div class="grid sm:grid-cols-2 gap-4">${vField("sb-from", L("از تاریخ؛ اختیاری", "From; optional"), "", 'type="datetime-local"')}${vField("sb-to", L("تا تاریخ؛ اختیاری", "To; optional"), "", 'type="datetime-local"')}</div><div class="v-actions !justify-start mt-4">${svBtn("Excel .xlsx", "svExport", 'data-format="xlsx"', true)}${svBtn("CSV", "svExport", 'data-format="csv"')}</div><p class="v-meta">${L("حداکثر ۱۰ هزار ردیف در هر فایل؛ برای داده بیشتر بازه تاریخ را محدود کنید. اطلاعات اتصال در گزارش نیست.", "Up to 10,000 rows per file; narrow the date range for larger datasets. Connection credentials are excluded.")}</p>`)}${vSection(L("پشتیبان رمزگذاری‌شده ماژول خدمات", "Encrypted services backup"), vField("sb-password", L("رمز فایل پشتیبان؛ حداقل ۱۲ کاراکتر", "Backup password; at least 12 characters"), "", 'type="password" autocomplete="new-password"') + `<div class="mt-4">${svBtn(L("دریافت پشتیبان", "Download backup"), "svBackupExport", "", true)}</div>` + vNote(L("پشتیبان شامل داده‌های ماژول خدمات است، نه همه تنظیمات قدیمی v2. رمز فایل و VAULT_KEY را جدا و امن نگه دارید. نشست‌های ورود صادر نمی‌شوند.", "Backups cover the services module, not every legacy v2 setting. Keep the archive password and VAULT_KEY separately. Login sessions are excluded.")))}${vSection(L("بازیابی در ماژول خدمات خالی", "Restore into an empty services module"), `<label class="v-field"><span>${L("فایل .bpbackup", "Backup file")}</span><input id="sb-file" type="file" accept=".bpbackup,.json"></label>${vField("sb-restore-password", L("رمز پشتیبان", "Archive password"), "", 'type="password"')}<div class="mt-4">${svBtn(L("بازیابی با تأیید", "Restore with confirmation"), "svBackupRestore")}</div>${vNote(L("داده مالی موجود بازنویسی نمی‌شود. بازیابی، فروش را در حالت نگهداری می‌گذارد؛ عملیات و پرداخت‌های باز نیازمند تطبیق خواهند بود. فایل از منابع نامطمئن وارد نکنید.", "Existing financial data is not overwritten. Restores enable maintenance mode and flag pending operations/payments for review. Do not import untrusted files."), true)}`)}${vSection(L("پشتیبان شبانه در R2", "Nightly R2 backups"), vCheck("sb-auto", L("پشتیبان زمان‌بندی‌شده فعال باشد", "Enable scheduled backups"), cfg.backup.enabled) + vField("sb-hour", L("ساعت تهران؛ ۰ تا ۲۳", "Tehran hour; 0–23"), cfg.backup.hour, 'type="number" min="0" max="23"') + `<div class="mt-4">${svBtn(t("save"), "svBackupSchedule")}</div>` + vNote(SV.meta.ready.backup ? L("binding و رمز پشتیبان در محیط تنظیم شده‌اند.", "Backup binding and password are configured.") : L("برای فعال‌شدن واقعی، binding با نام BACKUPS و secret با نام BACKUP_PASSWORD لازم است.", "For scheduled operation, configure the BACKUPS R2 binding and BACKUP_PASSWORD secret."), !SV.meta.ready.backup))}`,
   );
+  vSectionDefault(true);
+  return html;
 }
 ACTIONS.svExport = async (d) => {
   const q = new URLSearchParams({ format: d.format });

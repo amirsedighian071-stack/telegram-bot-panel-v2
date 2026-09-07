@@ -35,7 +35,9 @@ export function telegramMock() {
     if(method==='copyMessages')return Response.json({ok:true,result:payload.message_ids.map(message_id=>({message_id:nextMessage++}))});
     return Response.json({ok:true,result});
   };
-  return {calls,members,fetcher,setOverride(fn){override=fn;},clear(){calls.length=0;},sent(){return calls.filter(c=>c.method.startsWith('send')||c.method.startsWith('copy'));}};
+  // A button tap now refreshes the message it came from, so user-visible text can arrive
+  // either as a new message or as an edit of the open one.
+  return {calls,members,fetcher,setOverride(fn){override=fn;},clear(){calls.length=0;},sent(){return calls.filter(c=>c.method.startsWith('send')||c.method.startsWith('copy'));},delivered(){return calls.filter(c=>c.method.startsWith('send')||c.method.startsWith('copy')||c.method==='editMessageText');}};
 }
 export async function setup() {
   const env={BOT_KV:new MemoryKV(),TEST_MODE:true,WEBHOOK_SECRET:'test-webhook-secret',BOT_TOKEN:'123:TEST_TOKEN',APP_VERSION:'2.0.0'};

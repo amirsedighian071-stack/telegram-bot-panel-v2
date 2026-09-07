@@ -364,6 +364,8 @@
     const w = $('modal-wrap');
     w.classList.remove('hidden'); w.classList.add('flex');
     refreshIcons();
+    // Selection controls inside modals must show their current value immediately.
+    try { paintDropdowns($('modal-box')); } catch (e) {}
   }
   function closeModal() {
     const w = $('modal-wrap');
@@ -1418,11 +1420,12 @@
       '<span class="flex items-center gap-1 font-bold"><i data-lucide="' + icon + '" class="w-3.5 h-3.5"></i>' + label + '</span></button>';
   }
   const ACC_DEF = { set: ['general'], bc: ['target', 'text'], menu: ['start'] };
-  function accOpen(group, id) {
+  function accOpen(group, id, fallback) {
     try {
       const s = JSON.parse(localStorage.getItem('bp_acc_' + group) || '{}');
       if (s && typeof s[id] === 'boolean') return s[id];
     } catch (e) {}
+    if (typeof fallback === 'boolean') return fallback;
     return (ACC_DEF[group] || []).indexOf(id) >= 0;
   }
   function accSet(group, id, open) {
@@ -1441,6 +1444,20 @@
       '<div class="bp-sec-body"><div class="bp-sec-inner"><div class="px-5 md:px-6 pb-5 md:pb-6">' + inner + '</div></div></div></section>';
   }
   function secCard(id, icon, title, inner) { return accCard('set', id, icon, title, inner); }
+  // Collapsible section that may carry its own action buttons next to the toggle.
+  function accPanel(group, id, title, inner, buttons, opts) {
+    const o = opts || {};
+    const open = accOpen(group, id, o.open !== false);
+    return '<section data-acc="' + group + ':' + id + '" class="bp-sec ' + CLS.card + ' overflow-hidden' + (open ? ' open' : '') + '">' +
+      '<div class="flex items-center gap-2 p-5 md:p-6">' +
+      '<button type="button" data-act="accToggle" data-group="' + group + '" data-id="' + id + '" aria-expanded="' + open + '" class="flex items-center gap-2 flex-1 min-w-0 text-start cursor-pointer">' +
+      (o.icon ? '<i data-lucide="' + o.icon + '" class="w-4 h-4 text-brand-500 shrink-0"></i>' : '') +
+      '<span class="text-sm font-bold flex-1 min-w-0">' + title + '</span>' +
+      '<i data-lucide="chevron-down" class="chev w-4 h-4 text-slate-400 shrink-0"></i></button>' +
+      (buttons ? '<div class="flex gap-2 flex-wrap shrink-0">' + buttons + '</div>' : '') +
+      '</div>' +
+      '<div class="bp-sec-body"><div class="bp-sec-inner"><div class="px-5 md:px-6 pb-5 md:pb-6">' + inner + '</div></div></div></section>';
+  }
   function ddHtml(o) {
     const cur = o.options.some((x) => String(x[0]) === String(o.current)) ? String(o.current) : String(o.options[0][0]);
     const curLbl = (o.options.filter((x) => String(x[0]) === cur)[0] || o.options[0])[1];
@@ -1495,15 +1512,16 @@
     const btn = DD.openBox?.querySelector('[data-act="ddToggle"]');
     if (!btn || !btn.isConnected) return ddClose();
     const r = btn.getBoundingClientRect();
-    if (r.bottom < 0 || r.top > window.innerHeight) return ddClose();
-    const w = Math.max(Math.round(r.width), 160);
+    const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    if (r.bottom < -40 || r.top > vh + 40) return ddClose();
+    const w = Math.max(Math.round(r.width), 180);
     panel.style.width = w + 'px';
     panel.style.minWidth = '';
     panel.style.maxWidth = (window.innerWidth - 16) + 'px';
     panel.style.left = Math.max(8, Math.min(Math.round(r.left), window.innerWidth - w - 8)) + 'px';
     const maxH = 260;
     const need = Math.min(panel.scrollHeight, maxH);
-    const below = window.innerHeight - r.bottom - 8;
+    const below = vh - r.bottom - 8;
     const above = r.top - 8;
     if (below >= need || below >= above) {
       panel.style.top = Math.round(r.bottom + 6) + 'px';
@@ -1511,7 +1529,7 @@
       panel.style.maxHeight = Math.max(120, Math.min(maxH, below - 6)) + 'px';
     } else {
       panel.style.top = 'auto';
-      panel.style.bottom = Math.round(window.innerHeight - r.top + 6) + 'px';
+      panel.style.bottom = Math.round(vh - r.top + 6) + 'px';
       panel.style.maxHeight = Math.max(120, Math.min(maxH, above - 6)) + 'px';
     }
   }
@@ -1948,6 +1966,15 @@
     if (fn && !el.disabled) { e.preventDefault(); Promise.resolve(fn(el.dataset, el)).catch(err => toast(typeof vError === 'function' ? vError(err.message) : err.message, 'error')); }
   });
 
+  // Touch keyboards and mobile viewport changes can fire before "click" lands on an
+  // option, so a pick is also accepted on pointerdown; the later click becomes a no-op.
+  document.addEventListener('pointerdown', (e) => {
+    const opt = e.target instanceof Element ? e.target.closest('#dd-panel [data-act="ddPick"]') : null;
+    if (!opt || !DD.openBox) return;
+    e.preventDefault();
+    ACTIONS.ddPick(opt.dataset, opt);
+  });
+
   document.addEventListener('input', (e) => {
     const x = e.target;
     if (x.id === 'bc-text' && $('bc-count')) {
@@ -2012,7 +2039,11 @@
     if (e.target instanceof Element && e.target.closest('#dd-panel')) return;
     if (!DD.positionFrame) DD.positionFrame = requestAnimationFrame(() => { DD.positionFrame = null; if (DD.openBox) positionDropdown(); });
   }, true);
-  window.addEventListener('resize', () => ddClose());
+  window.addEventListener('resize', () => { if (DD.openBox) positionDropdown(); });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => { if (DD.openBox) positionDropdown(); });
+    window.visualViewport.addEventListener('scroll', () => { if (DD.openBox) positionDropdown(); });
+  }
 
   function go(route) {
     if (ROUTES.includes(route)) location.hash = '#/' + route;
