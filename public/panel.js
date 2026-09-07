@@ -444,7 +444,7 @@
 
   function renderLogin(msg) {
     clearTimers();
-    document.title = 'BotPanel — ' + t('signIn');
+    document.title = 'BotPanel v2 — ' + t('signIn');
     $('app').innerHTML =
       '<div class="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">' +
       '<div class="absolute w-[480px] h-[480px] rounded-full bg-brand-500/15 blur-3xl -top-32 -end-32"></div>' +
@@ -524,7 +524,7 @@
   }
 
   function renderShell() {
-    document.title = 'BotPanel — ' + t(S.route);
+    document.title = 'BotPanel v2 — ' + t(S.route);
     const nav = (mobile) => NAV.filter(n => typeof visibleRoute !== 'function' || visibleRoute(n.id)).filter(n => !mobile || ['dashboard','studio','broadcast','settings'].includes(n.id)).map((n) => {
       const active = S.route === n.id;
       if (mobile) {
@@ -542,7 +542,7 @@
       '<div class="flex items-center gap-3 px-2 py-3 mb-4">' +
       '<div class="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-400 to-blue-600 flex items-center justify-center shadow-md shadow-brand-500/25"><i data-lucide="send" class="w-5 h-5 text-white"></i></div>' +
       '<div><div class="font-extrabold leading-tight">' + t('appShort') + '</div>' +
-      '<div class="text-[11px] text-slate-400">Telegram Bot Panel</div></div></div>' +
+      '<div class="text-[11px] text-slate-400">Telegram Bot Panel · v' + esc(document.documentElement.dataset.panelVersion || '2') + '</div></div></div>' +
       '<nav class="flex-1 space-y-1 overflow-y-auto">' + nav(false) + '</nav>' +
       '<button data-act="logout" class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium text-rose-500 hover:bg-rose-500/10 transition mt-2"><i data-lucide="log-out" class="w-[18px] h-[18px]"></i>' + t('logout') + '</button>' +
       '<div class="text-[10px] text-slate-400 px-2 pt-3 border-t border-slate-100 dark:border-slate-800 mt-3">' + t('poweredBy') + '</div>' +

@@ -13,3 +13,9 @@ for (const [pkg, file] of [['lucide', 'lucide-LICENSE'], ['@fontsource/vazirmatn
   const source = `node_modules/${pkg}/LICENSE`;
   if (fs.existsSync(source)) fs.copyFileSync(source, `public/vendor/${file}`);
 }
+
+const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+const html = fs.readFileSync('public/index.html', 'utf8')
+  .replace(/data-panel-version="[^"]*"/, `data-panel-version="${version}"`)
+  .replace(/(\/(?:panel|studio)\.(?:css|js))(?:\?v=[^"']*)?/g, `$1?v=${version}`);
+fs.writeFileSync('public/index.html', html);

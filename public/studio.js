@@ -81,6 +81,38 @@ async function vAuthorizedFile(path) {
   if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.error || 'file_unavailable'); }
   return r.blob();
 }
+function vMediaQuickActions() {
+  return `<div class="v-upload-heading"><h4>${L('عکس یا فایل را از دستگاه اضافه کنید','Add a photo or file from your device')}</h4><p>${L('بدون لینک؛ از گالری یا فایل‌های گوشی و کامپیوتر','No URL needed; choose from your gallery or files')}</p></div>
+  <div class="v-media-actions">
+    <button type="button" data-act="vAddMedia" data-kind="photo" class="v-media-pick v-media-photo"><span class="v-icon">${vIcon('image-plus')}</span><span><strong>${L('افزودن عکس','Add photo')}</strong><small>JPEG / PNG · ${L('تا ۱۰ مگابایت','up to 10 MB')}</small></span>${vIcon('plus')}</button>
+    <button type="button" data-act="vAddMedia" data-kind="document" class="v-media-pick v-media-file"><span class="v-icon">${vIcon('file-plus-2')}</span><span><strong>${L('افزودن فایل','Add file')}</strong><small>${L('همه فرمت‌ها · تا ۲۰ مگابایت','Any format · up to 20 MB')}</small></span>${vIcon('plus')}</button>
+  </div>`;
+}
+ACTIONS.vAddMedia = d => {
+  if (V2.uploads) return toast(L('تا پایان آپلود صبر کنید.','Wait for the upload to finish.'), 'info');
+  const input = document.querySelector('[data-upload="ph-media"]');
+  if (!input || !['photo', 'document'].includes(d.kind)) return;
+  input.dataset.pickerKind = d.kind;
+  input.accept = d.kind === 'photo' ? 'image/jpeg,image/png' : '';
+  input.click();
+};
+document.addEventListener('cancel', e => {
+  if (e.target.matches?.('[data-upload="ph-media"]')) {
+    delete e.target.dataset.pickerKind;
+    e.target.accept = vVal('ph-kind') === 'photo' ? 'image/jpeg,image/png' : '';
+  }
+}, true);
+function purposePreview(key, customModules = V2.settings?.customModules || []) {
+  const purpose = V2.settings?.purposes?.[key]; if (!purpose) return '';
+  const modules = key === 'custom' ? customModules : purpose.modules;
+  const applied = key === V2.settings.botPurpose && (key !== 'custom' || [...modules].sort().join(',') === [...V2.settings.customModules].sort().join(','));
+  const description = key === 'channel'
+    ? L('پنل مخصوص کانال: محصولات و دیپ‌لینک اختصاصی، دسته‌بندی شیشه‌ای، زمان‌بندی و انتشار خودکار، نظرسنجی و قفل عضویت. ابزارهای سفارش فروشگاه و بی‌نام‌ساز در این حالت پنهان می‌شوند.','Channel workspace: product deep links, inline categories, scheduling, auto-publishing, polls and membership gates. Store orders and anonymous relaying are hidden in this mode.')
+    : key === 'custom'
+      ? L('همه ابزارها در دسترس‌اند؛ ماژول‌های دلخواه را انتخاب کنید. تغییر نوع، اطلاعات قبلی را حذف نمی‌کند.','Every tool is available. Choose your own modules; changing the type does not delete data.')
+      : L('پس از اعمال، پنل و منوی ربات فقط ابزارهای مرتبط با این نوع را نشان می‌دهند. اطلاعات سایر بخش‌ها حفظ می‌شود.','Once applied, the panel and bot menu show tools relevant to this type. Other data is preserved.');
+  return `<div class="v-purpose-summary"><div class="flex items-start gap-3"><span class="v-icon shrink-0">${vIcon(purpose.icon)}</span><div><h4 class="text-sm font-bold">${esc(S.lang==='en' ? purpose.en : purpose.fa)}</h4><p class="v-meta">${description}</p></div></div><div class="flex gap-2 flex-wrap mt-3">${modules.map(m=>`<span class="v-badge">${vModuleName(m)}</span>`).join('')}</div><p class="v-meta mt-3">${applied ? L('نوع فعلی ربات','Current bot type') : L('این پیش‌نمایش است؛ برای ذخیره، «اعمال نوع ربات» را بزنید.','This is a preview. Use “Apply bot type” to save.')}</p></div>`;
+}
 function uploadField(id, label, value = '', kind = 'auto') {
   const record = (V2.cache.media || []).find(m => m.id === value);
   return `<div class="v-upload" data-slot="${id}"><label class="v-field mb-2">${label}</label><input id="${id}" type="hidden" value="${esc(value)}"><input id="${id}-kind" type="hidden" value="${esc(record?.kind || '')}"><label class="v-drop" data-drop="${id}">${vIcon('cloud-upload')}<span><b class="block text-sm">${L('انتخاب مستقیم از دستگاه', 'Choose from your device')}</b><span class="text-[11px] text-slate-400">${L('یا فایل را اینجا رها کنید • عکس ۱۰، فایل ۲۰ مگابایت', 'or drop a file here • Photo 10 MB / File 20 MB')}</span></span><input type="file" data-upload="${id}" data-kind="${kind}" aria-label="${esc(label)}" ${kind === 'photo' ? 'accept="image/jpeg,image/png"' : ''}></label><div id="${id}-status" class="v-upload-status text-slate-400" aria-live="polite">${value ? '✓ ' + esc(record?.name || L('فایل ثبت‌شده', 'Saved file')) : ''}</div><div class="flex gap-3 mt-1"><button type="button" data-act="vMediaClear" data-slot="${id}" class="text-xs text-rose-400">${L('حذف انتخاب','Clear selection')}</button><button type="button" data-act="vMediaChoose" data-slot="${id}" data-kind="${kind}" class="text-xs text-brand-500">${L('انتخاب از فایل‌های قبلی','Choose an existing file')}</button></div></div>`;
@@ -109,10 +141,15 @@ async function uploadSelected(input, file) {
   if (!file) return;
   const slot = input.dataset.upload, host = $(slot + '-status'), zone = input.closest('.v-drop');
   let kind = input.dataset.kind || 'auto';
-  if (slot === 'ph-media') kind = vVal('ph-kind') || 'auto';
+  if (slot === 'ph-media') {
+    kind = input.dataset.pickerKind || vVal('ph-kind') || 'auto';
+    delete input.dataset.pickerKind;
+  }
   if (kind === 'auto') kind = /^image\/(jpeg|png)$/.test(file.type) ? 'photo' : file.type === 'image/gif' ? 'animation' : file.type === 'video/mp4' ? 'video' : /^audio\/(mpeg|mp4|x-m4a)$/.test(file.type) ? 'audio' : 'document';
   if (file.size > (kind === 'photo' ? 10 : 20) * 1024 * 1024) return toast(vError('file_too_large'), 'error');
   if (!V2.settings?.uploads?.chatId) return toast(vError('upload_chat_required'), 'error');
+  ACTIONS.vMediaClear({ slot });
+  if (slot === 'ph-media') { $('ph-kind').value = kind; paintDropdowns(); }
   V2.uploads++; zone.classList.add('uploading'); host.textContent = L('در حال آماده‌سازی…', 'Preparing…');
   try {
     if (kind === 'photo') file = await vWatermark(file);
@@ -126,7 +163,7 @@ async function uploadSelected(input, file) {
       xhr.onerror = () => reject(new Error(t('offline'))); xhr.ontimeout = () => reject(new Error('telegram_network_error')); xhr.send(form);
     });
     V2.cache.media = [data, ...(V2.cache.media || [])];
-    if (!$(slot)) return;
+    if (!input.isConnected || !$(slot) || $(slot).closest('.v-upload') !== input.closest('.v-upload')) return;
     $(slot).value = data.id; $(slot + '-kind').value = data.kind;
     host.textContent = `✓ ${data.name} · ${(data.size / 1024 / 1024).toFixed(2)} MB`;
     const old = zone.parentElement.querySelector('.v-preview'); if (old) { URL.revokeObjectURL(old.src); old.remove(); }
@@ -164,7 +201,7 @@ function profileCards(selected) {
 function paintV2Settings() {
   const s = V2.settings; if (!$('v-profile-settings') || !s) return;
   V2.purposeDraft = s.botPurpose; V2.lockDraft = structuredClone(s.requiredChats.targets || []); V2.logoDraft = s.uploads.watermark.logo || '';
-  $('v-profile-settings').innerHTML = `<section class="v-hero"><div class="v-eyebrow">BOT STUDIO / 02</div><div class="flex items-start justify-between gap-3 mb-6"><div><h2 class="text-2xl font-extrabold">${L('ربات برای چه کاری باشد؟', 'What should your bot do?')}</h2><p class="text-sm text-slate-400 leading-7 mt-2">${L('یک ربات، متناسب با کار شما. ابزارهای مرتبط می‌مانند و بخش‌های اضافی پنهان می‌شوند.', 'One bot, built around your workflow. Relevant tools stay; the rest step aside.')}</p></div><span class="v-badge shrink-0">12 ${L('نوع ربات', 'bot types')}</span></div><div id="v-profile-cards">${profileCards(s.botPurpose)}</div><div id="v-custom-modules" class="${s.botPurpose === 'custom' ? '' : 'hidden'} mt-5"><p class="text-xs text-slate-400 mb-2">${L('ماژول‌های دلخواه در حالت پیش‌فرض:', 'Choose modules in Custom mode:')}</p><div class="grid grid-cols-2 sm:grid-cols-3 gap-x-3">${Object.keys(MODULE_LABELS).map(m => vCheck('v-mod-' + m, vModuleName(m), s.customModules.includes(m))).join('')}</div></div><div class="flex items-center justify-between flex-wrap gap-4 mt-6"><p class="text-xs text-slate-400">${L('تغییر نوع ربات، اطلاعات و تنظیمات قبلی را پاک نمی‌کند.', 'Changing the bot type never deletes your existing data.')}</p>${vButton(L('اعمال نوع ربات', 'Apply bot type'), 'vSavePurpose', '', true)}</div></section>`;
+  $('v-profile-settings').innerHTML = `<section class="v-hero"><div class="v-eyebrow">BOT STUDIO / 02</div><div class="flex items-start justify-between gap-3 mb-6"><div><h2 class="text-2xl font-extrabold">${L('ربات برای چه کاری باشد؟', 'What should your bot do?')}</h2><p class="text-sm text-slate-400 leading-7 mt-2">${L('یک ربات، متناسب با کار شما. ابزارهای مرتبط می‌مانند و بخش‌های اضافی پنهان می‌شوند.', 'One bot, built around your workflow. Relevant tools stay; the rest step aside.')}</p></div><span class="v-badge shrink-0">${Object.keys(s.purposes).length} ${L('نوع ربات', 'bot types')}</span></div><div id="v-profile-cards">${profileCards(s.botPurpose)}</div><div id="v-purpose-preview" class="mt-5" aria-live="polite">${purposePreview(s.botPurpose)}</div><div id="v-custom-modules" class="${s.botPurpose === 'custom' ? '' : 'hidden'} mt-5"><p class="text-xs text-slate-400 mb-2">${L('ماژول‌های دلخواه در حالت پیش‌فرض:', 'Choose modules in Custom mode:')}</p><div class="grid grid-cols-2 sm:grid-cols-3 gap-x-3">${Object.keys(MODULE_LABELS).map(m => vCheck('v-mod-' + m, vModuleName(m), s.customModules.includes(m))).join('')}</div></div><div class="flex items-center justify-between flex-wrap gap-4 mt-6"><p class="text-xs text-slate-400">${L('تغییر نوع ربات، اطلاعات و تنظیمات قبلی را پاک نمی‌کند.', 'Changing the bot type never deletes your existing data.')}</p>${vButton(L('اعمال نوع ربات', 'Apply bot type'), 'vSavePurpose', '', true)}</div></section>`;
   const u = s.uploads, sh = s.shop, rl = s.relay, lo = s.loyalty;
   $('v-extra-settings').innerHTML = [
     vSection('🔒 ' + L('قفل عضویت چند کانال و گروه', 'Multiple membership locks'), vCheck('v-lock-on', L('فعال؛ دسترسی فقط پس از عضویت در همه مقصدهای مربوط به این نوع ربات', 'Require membership in every matching chat before granting access'), s.requiredChats.enabled) + '<div id="v-lock-rows" class="space-y-3 mt-3"></div><div class="mt-3">' + vButton(L('افزودن قفل جدید','Add required chat'), 'vLockAdd') + '</div><div class="mt-4">' + vNote(L('ربات باید ادمین همه مقصدها باشد. برای گروه/کانال خصوصی، لینک دعوت الزامی است. خطای تلگرام دسترسی را باز نمی‌کند؛ عضویت در هر درخواست دوباره بررسی می‌شود. «همه حالت‌ها» بر تمام انواع ربات اعمال می‌شود.', 'The bot must be an administrator in every target. Private chats need invite links. Telegram errors keep access locked; membership is rechecked on each request. Global locks apply to every bot type.')) + '</div>', vButton(t('save'), 'vSaveLocks', '', true)),
@@ -182,7 +219,17 @@ function renderLockRows() {
   refreshIcons(); paintDropdowns();
 }
 function syncLocks() { V2.lockDraft = V2.lockDraft.map((_, i) => ({ title: vVal(`vl-title-${i}`), chatId: vVal(`vl-chat-${i}`), url: vVal(`vl-url-${i}`), scope: vVal(`vl-scope-${i}`) })); }
-ACTIONS.vChoosePurpose = d => { V2.purposeDraft = d.id; $('v-profile-cards').innerHTML = profileCards(d.id); $('v-custom-modules').classList.toggle('hidden', d.id !== 'custom'); refreshIcons(); };
+ACTIONS.vChoosePurpose = d => {
+  if (!Object.hasOwn(V2.settings.purposes, d.id)) return;
+  V2.purposeDraft = d.id;
+  document.querySelectorAll('.v-profile').forEach(card => {
+    const selected = card.dataset.id === d.id;
+    card.classList.toggle('selected', selected); card.setAttribute('aria-pressed', String(selected));
+  });
+  $('v-purpose-preview').innerHTML = purposePreview(d.id, Object.keys(MODULE_LABELS).filter(m => vOn('v-mod-' + m)));
+  $('v-custom-modules').classList.toggle('hidden', d.id !== 'custom');
+  refreshIcons();
+};
 ACTIONS.vSavePurpose = async () => { const body = { botPurpose: V2.purposeDraft, customModules: Object.keys(MODULE_LABELS).filter(m => vOn('v-mod-' + m)) }; if (!(await confirmDlg(L('نوع و رفتار ربات تغییر کند؟ اطلاعات قبلی حذف نمی‌شود. زمان‌بندی ماژول‌های پنهان متوقف و دسترسی حالت شب غیرفعال بازگردانی می‌شود.', 'Change the bot type and behavior? Data is preserved. Disabled schedules pause and night permissions are restored.'), L('اعمال تغییر','Apply')))) return; await vSaveSettings(body, true); };
 ACTIONS.vLockAdd = () => { syncLocks(); if (V2.lockDraft.length >= 20) return; V2.lockDraft.push({ chatId: '', url: '', title: '', scope: 'all' }); renderLockRows(); };
 ACTIONS.vLockRemove = d => { syncLocks(); V2.lockDraft.splice(Number(d.index), 1); renderLockRows(); };
@@ -196,11 +243,23 @@ ACTIONS.vSaveLoyalty = () => vSaveSettings({ loyalty: { enabled: vOn('v-loyalty-
 ACTIONS.vSaveMotion = () => { localStorage.setItem('bp_motion', vVal('v-motion')); document.documentElement.dataset.motion = vVal('v-motion'); toast(t('saved'),'success'); };
 document.addEventListener('visibilitychange', () => document.documentElement.classList.toggle('page-hidden', document.hidden));
 
+if (!ACC_DEF.bc.includes('photo')) ACC_DEF.bc.push('photo');
 const vOriginalBroadcast = renderBroadcast;
 renderBroadcast = function () {
   vOriginalBroadcast();
   const host = document.querySelector('[data-acc="bc:photo"] .bp-sec-inner > div');
-  host.innerHTML = `<div class="grid sm:grid-cols-2 gap-4 mb-4">${vSelect('ph-kind', L('ارسال به شکل','Send as'), [['auto',L('تشخیص خودکار','Automatic')],['photo',L('عکس','Photo')],['document',L('فایل اصلی (هر فرمت)','Original file (any format)')],['video',L('ویدیو MP4','MP4 video')],['animation',L('گیف / انیمیشن','GIF / animation')],['audio',L('صوت MP3 / M4A','MP3 / M4A audio')]], 'auto')}${vSelect('ph-operation',L('پردازش رسانه','Media processing'),[['none',L('بدون پردازش خارجی','No external processing')],['compress',L('فشرده‌سازی · سرویس خارجی','Compress · external processor')],['video_to_gif',L('ویدیو به گیف · سرویس خارجی','Video to GIF · external processor')],['watermark',L('واترمارک ویدیو · سرویس خارجی','Video watermark · external processor')]],'none')}</div>${uploadField('ph-media',L('عکس یا فایل خود را اضافه کنید','Add your photo or file'))}<div class="mt-4">${vArea('ph-cap',L('متن همراه فایل؛ حداکثر ۱۰۲۴ کاراکتر','Caption; up to 1024 characters'),'',3,'maxlength="1024"')}</div>${vCheck('ph-react',t('withReactions'),true)}${vCheck('ph-feedback',L('دکمه ثبت نظر متنی (یوزرنیم ربات لازم است)','Text feedback button (requires bot username)'),false)}${vArea('ph-buttons',L('دکمه‌های شیشه‌ای؛ هر خط: عنوان | لینک HTTPS','Inline URL buttons; one Title | HTTPS URL per line'),'',2)}<div class="mt-4">${vNote(V2.settings?.uploads?.chatId ? L('آپلود مستقیم فعال است. فایل پس از آپلود برای ارسال انتخاب می‌شود. واترمارک عکس، در صورت فعال‌بودن در تنظیمات، خودکار اعمال خواهد شد.', 'Direct upload is configured. Select a file, wait for completion, then send. Image watermarks follow your settings.') : L('برای اولین آپلود، در تنظیمات ← فایل و رسانه، آیدی چت ذخیره‌سازی را وارد کنید.', 'Before the first upload, configure a storage chat in Settings → Media.'), !V2.settings?.uploads?.chatId)}</div>${bcSendBtn('photo')}${bcMiniHist('photo')}`;
+  host.innerHTML = `${vMediaQuickActions()}${uploadField('ph-media',L('یا فایل را اینجا رها کنید','Or drop your file here'))}
+    <div class="mt-4">${vArea('ph-cap',L('متن همراه عکس یا فایل؛ اختیاری','Photo or file caption; optional'),'',3,'maxlength="1024"')}</div>
+    <details id="v-media-options" class="v-media-details mt-4"><summary>${vIcon('sliders-horizontal')}${L('تنظیمات بیشتر؛ نوع رسانه، پردازش و دکمه‌ها','More options; media type, processing & buttons')}</summary><div class="space-y-4 pt-4">
+      <div class="grid sm:grid-cols-2 gap-4">${vSelect('ph-kind',L('ارسال به شکل','Send as'),[['auto',L('تشخیص خودکار','Automatic')],['photo',L('عکس','Photo')],['document',L('فایل اصلی (هر فرمت)','Original file (any format)')],['video',L('ویدیو MP4','MP4 video')],['animation',L('گیف / انیمیشن','GIF / animation')],['audio',L('صوت MP3 / M4A','MP3 / M4A audio')]],'auto')}${vSelect('ph-operation',L('پردازش رسانه','Media processing'),[['none',L('بدون پردازش خارجی','No external processing')],['compress',L('فشرده‌سازی · سرویس خارجی','Compress · external processor')],['video_to_gif',L('ویدیو به گیف · سرویس خارجی','Video to GIF · external processor')],['watermark',L('واترمارک ویدیو · سرویس خارجی','Video watermark · external processor')]],'none')}</div>
+      ${vCheck('ph-react',t('withReactions'),true)}${vCheck('ph-feedback',L('دکمه ثبت نظر متنی (یوزرنیم ربات لازم است)','Text feedback button (requires bot username)'),false)}
+      ${vArea('ph-buttons',L('دکمه‌های شیشه‌ای؛ هر خط عنوان | لینک مقصد دکمه (نه لینک فایل)','Inline buttons; one Title | Button destination URL per line (not a file URL)'),'',2)}
+    </div></details>
+    <div class="mt-4">${vNote(V2.settings?.uploads?.chatId ? L('فایل مستقیماً از دستگاه آپلود می‌شود؛ لینک عمومی لازم نیست. تا پایان آپلود صبر کنید و سپس ارسال را بزنید.','Files upload directly from your device; no public URL is needed. Wait for completion, then send.') : L('تنظیم اولیه: در تنظیمات ← فایل و رسانه، چت ذخیره‌سازی تلگرام را مشخص کنید. پس از آن فقط فایل را انتخاب کنید؛ نیازی به ساخت لینک نیست.','First configure a Telegram storage chat in Settings → Media. After that, simply choose a file; no file-hosting link is needed.'), !V2.settings?.uploads?.chatId)}</div>
+    ${bcSendBtn('photo')}${bcMiniHist('photo')}`;
+  const photoSection = document.querySelector('[data-acc="bc:photo"]');
+  document.querySelector('[data-acc="bc:target"]').after(photoSection);
+  photoSection.querySelector('[data-act="accToggle"] .font-bold').textContent = L('عکس و فایل · آپلود مستقیم','Photos & files · direct upload');
   const pollHost = document.querySelector('[data-acc="bc:poll"] .bp-sec-inner > div');
   pollHost.insertAdjacentHTML('beforeend', `<div class="v-divider"></div><div class="grid sm:grid-cols-2 gap-4">${vSelect('poll-mode',L('نوع نظرسنجی','Poll mode'),[['single',L('تک‌گزینه‌ای','Single choice')],['multiple',L('چندگزینه‌ای','Multiple choice')],['quiz',L('مسابقه / کوییز','Quiz')]],'single')}${vField('poll-end',L('پایان رأی‌گیری؛ اختیاری','Voting deadline; optional'),'','type="datetime-local"')}${vField('poll-correct',L('شماره پاسخ صحیح (فقط کوییز)','Correct answer number (quiz only)'),1,'type="number" min="1" max="10"')}${vField('poll-reward',L('امتیاز پاسخ صحیح','Points for a correct answer'),1,'type="number" min="0" max="1000"')}</div>${vCheck('poll-members',L('فقط اعضای کانال/گروه مقصد بتوانند رأی بدهند','Only members of the target channel/group may vote'),true)}<p class="v-meta">${L('برای مقصد خصوصی، لینک دعوت آن را در قفل‌های عضویت تنظیم کنید. پاسخ کوییز یک‌بار ثبت می‌شود و قابل تغییر نیست.', 'For private targets, configure an invite link in membership settings. Quiz answers are final and cannot be changed.')}</p>`);
   if (vHas('channel')) $('view').insertAdjacentHTML('afterbegin', `<div class="mb-4">${accCard('bc','schedule','calendar-clock',L('زمان‌بندی، تکرار و حذف خودکار','Schedule, repeat & auto-delete'),`<div class="grid sm:grid-cols-3 gap-4">${vField('bc-schedule',L('زمان ارسال (خالی = همین حالا)','Send time (empty = now)'),'','type="datetime-local"')}${vField('bc-delete-hours',L('حذف پس از چند ساعت؟ (۰ = نکن)','Delete after hours (0 = never)'),0,'type="number" min="0" max="47" step="0.25"')}${vField('bc-repeat-min',L('تکرار هر چند دقیقه؟ (۰ = نکن)','Repeat every minutes (0 = never)'),0,'type="number" min="0" max="525600"')}</div><div class="mt-4">${vNote(L('زمان بر اساس منطقه زمانی دستگاه شماست: ','Time uses your device timezone: ') + esc(Intl.DateTimeFormat().resolvedOptions().timeZone) + '<br>' + L('اجرای زمان‌بندی در سرور، با دقت تقریبی یک دقیقه است و به بازبودن پنل وابسته نیست. حداقل تکرار ۵ دقیقه، حداکثر حذف ۴۷ ساعت (محدودیت تلگرام).', 'Runs on the server, approximately once per minute, even with the panel closed. Minimum repeat: 5 minutes. Maximum auto-delete: 47 hours (Telegram limit).'))}</div>`)}</div>`);
@@ -383,5 +442,12 @@ document.addEventListener('change', e => {
   if (['ph-kind', 'ph-operation'].includes(e.target.id) && vVal('ph-media')) {
     ACTIONS.vMediaClear({ slot: 'ph-media' });
     toast(L('نوع یا پردازش رسانه تغییر کرد؛ فایل را دوباره انتخاب کنید.', 'Media type or processing changed. Select the file again.'), 'info');
+  }
+});
+
+document.addEventListener('change', e => {
+  if (e.target.id.startsWith('v-mod-') && V2.purposeDraft === 'custom' && $('v-purpose-preview')) {
+    $('v-purpose-preview').innerHTML = purposePreview('custom', Object.keys(MODULE_LABELS).filter(m => vOn('v-mod-' + m)));
+    refreshIcons();
   }
 });
