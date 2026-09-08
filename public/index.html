@@ -271,6 +271,15 @@
     <div id="toasts" class="fixed z-[60] bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 flex flex-col gap-2 w-[min(92vw,380px)] pointer-events-none"></div>
     <div id="dd-panel" role="listbox" class="hidden"></div>
 
+    <div id="save-bar" class="hidden fixed inset-x-0 z-40 bottom-[calc(3.75rem+env(safe-area-inset-bottom))] md:bottom-4 pointer-events-none px-3">
+      <div class="max-w-3xl mx-auto">
+        <div class="pointer-events-auto flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 backdrop-blur shadow-lg shadow-slate-950/10 px-4 py-3">
+          <span id="save-bar-msg" class="flex-1 min-w-0 text-xs font-medium text-slate-500 dark:text-slate-400 leading-5"></span>
+          <button id="save-bar-btn" type="button" data-act="saveAll" class="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-500 hover:bg-brand-600 text-white text-sm font-semibold px-4 py-2.5 transition disabled:opacity-50 disabled:cursor-not-allowed shrink-0"><i data-lucide="save" class="w-4 h-4"></i><span id="save-bar-btn-label">ذخیره همه تغییرات</span></button>
+        </div>
+      </div>
+    </div>
+
   <noscript><div style="padding:2rem;text-align:center">This app requires JavaScript / این پنل به جاوااسکریپت نیاز دارد.</div></noscript>
 
     <script src="/vendor/lucide.min.js"></script>

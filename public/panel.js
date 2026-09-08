@@ -41,6 +41,7 @@
       dashboard: 'داشبورد', users: 'کاربران', broadcast: 'ارسال همگانی', menuBuilder: 'منو و دکمه‌ها', settings: 'تنظیمات',
       logout: 'خروج', confirmLogout: 'از پنل خارج می‌شوید؟',
       save: 'ذخیره', saved: 'ذخیره شد', cancel: 'انصراف', close: 'بستن', confirm: 'تایید', remove: 'حذف',
+      saveAllBtn: 'ذخیره همه تغییرات', allSaved: 'تمامی تغییرات ذخیره شدند', unsavedHint: 'تغییرات ذخیره‌نشده دارید', savingAll: 'در حال ذخیره…',
       refresh: 'بروزرسانی', loading: 'در حال بارگذاری…', none: '—', send: 'ارسال', sending: 'در حال ارسال…',
       errorGeneric: 'خطایی رخ داد', copy: 'کپی', copied: 'کپی شد',
       liveStatus: 'وضعیت لحظه‌ای ورکر', operational: 'فعال', offline: 'قطع', latency: 'تأخیر',
@@ -127,6 +128,7 @@
       dashboard: 'Dashboard', users: 'Users', broadcast: 'Broadcast', menuBuilder: 'Menus & Buttons', settings: 'Settings',
       logout: 'Log out', confirmLogout: 'Log out of the panel?',
       save: 'Save', saved: 'Saved', cancel: 'Cancel', close: 'Close', confirm: 'Confirm', remove: 'Remove',
+      saveAllBtn: 'Save all changes', allSaved: 'All changes saved', unsavedHint: 'You have unsaved changes', savingAll: 'Saving…',
       refresh: 'Refresh', loading: 'Loading…', none: '—', send: 'Send', sending: 'Sending…',
       errorGeneric: 'Something went wrong', copy: 'Copy', copied: 'Copied',
       liveStatus: 'Worker live status', operational: 'Operational', offline: 'Offline', latency: 'Latency',
@@ -182,6 +184,7 @@
     route: 'dashboard',
     timers: [],
     live: { state: 'unknown', ms: null, colo: null, at: null },
+    saveBar: 'idle',
   };
   const ROUTES = ['dashboard', 'studio', 'users', 'broadcast', 'support', 'menu', 'settings'];
   const NAV = [
@@ -198,7 +201,7 @@
   const MU = { menu: null, defaults: null, sub: null };
   const CF = { resolve: null };
   const MODAL = { ctx: {} };
-  const DD = { openBox: null, lastBox: null, swallowClickUntil: 0 };
+  const DD = { openBox: null, lastBox: null, swallowClickUntil: 0, press: null };
 
   var _0x7a3d = [
     220,133,211,192,133,157,133,195,194,209,
@@ -573,6 +576,8 @@
 
     paintLive();
     ({ dashboard: renderDashboard, studio: renderStudio, users: renderUsers, broadcast: renderBroadcast, support: renderSupport, menu: renderMenu, settings: renderSettings })[S.route]();
+    S.saveBar = 'idle';
+    updateSaveBar();
     refreshIcons();
     _crR();
     fetchSupportBadge();
@@ -1444,7 +1449,8 @@
       '<div class="bp-sec-body"><div class="bp-sec-inner"><div class="px-5 md:px-6 pb-5 md:pb-6">' + inner + '</div></div></div></section>';
   }
   function secCard(id, icon, title, inner) { return accCard('set', id, icon, title, inner); }
-  // Collapsible section that may carry its own action buttons next to the toggle.
+  // Collapsible section. Optional action buttons render inside the body (below the
+  // content), keeping the header row a plain expand/collapse toggle.
   function accPanel(group, id, title, inner, buttons, opts) {
     const o = opts || {};
     const open = accOpen(group, id, o.open !== false);
@@ -1454,9 +1460,10 @@
       (o.icon ? '<i data-lucide="' + o.icon + '" class="w-4 h-4 text-brand-500 shrink-0"></i>' : '') +
       '<span class="text-sm font-bold flex-1 min-w-0">' + title + '</span>' +
       '<i data-lucide="chevron-down" class="chev w-4 h-4 text-slate-400 shrink-0"></i></button>' +
-      (buttons ? '<div class="flex gap-2 flex-wrap shrink-0">' + buttons + '</div>' : '') +
       '</div>' +
-      '<div class="bp-sec-body"><div class="bp-sec-inner"><div class="px-5 md:px-6 pb-5 md:pb-6">' + inner + '</div></div></div></section>';
+      '<div class="bp-sec-body"><div class="bp-sec-inner"><div class="px-5 md:px-6 pb-5 md:pb-6">' + inner +
+      (buttons ? '<div class="sec-actions mt-4 flex gap-2 flex-wrap">' + buttons + '</div>' : '') +
+      '</div></div></div></section>';
   }
   function ddHtml(o) {
     const cur = o.options.some((x) => String(x[0]) === String(o.current)) ? String(o.current) : String(o.options[0][0]);
@@ -1879,36 +1886,30 @@
       };
       const tk = $('st-token-in').value.trim();
       if (tk) body.botToken = tk;
-      try {
-        await api('/settings', { method: 'PUT', body });
-        $('st-token-in').value = '';
-        toast(t('saved'), 'success');
-        loadSettings();
-      } catch (e) { toast(e.message, 'error'); }
+      await api('/settings', { method: 'PUT', body });
+      $('st-token-in').value = '';
+      toast(t('saved'), 'success');
+      loadSettings();
     },
     saveChannel: async () => {
-      try {
-        await api('/settings', {
-          method: 'PUT',
-          body: {
-            requiredChannel: {
-              enabled: $('st-ch-on').checked,
-              chatId: $('st-ch-id').value.trim(),
-              url: $('st-ch-url').value.trim(),
-            },
+      await api('/settings', {
+        method: 'PUT',
+        body: {
+          requiredChannel: {
+            enabled: $('st-ch-on').checked,
+            chatId: $('st-ch-id').value.trim(),
+            url: $('st-ch-url').value.trim(),
           },
-        });
-        toast(t('saved'), 'success');
-      } catch (e) { toast(e.message, 'error'); }
+        },
+      });
+      toast(t('saved'), 'success');
     },
     saveTuning: async () => {
-      try {
-        await api('/settings', {
-          method: 'PUT',
-          body: { broadcast: { batchSize: Number($('st-batch').value), delayMs: Number($('st-delay').value) } },
-        });
-        toast(t('saved'), 'success');
-      } catch (e) { toast(e.message, 'error'); }
+      await api('/settings', {
+        method: 'PUT',
+        body: { broadcast: { batchSize: Number($('st-batch').value), delayMs: Number($('st-delay').value) } },
+      });
+      toast(t('saved'), 'success');
     },
     changePw: async () => {
       const cur = $('st-cur-pw').value;
@@ -1938,6 +1939,71 @@
   };
 
   function syncMenuSafe() { try { syncMenuDom(); } catch (e) {} }
+
+  // ===== Bottom save-bar: one button that persists every saveable section of the
+  // current route, with an inline "all changes saved" confirmation.
+  const SAVE_ACT_RE = /^(save[A-Z]|vSave|sv[A-Za-z]*Save)/;
+  const SAVE_ALL_EXCLUDE = ['vSavePurpose']; // structural action guarded by a confirm dialog
+  function saveAllActions() {
+    const view = $('view');
+    if (!view || !S.token || S.mustChangePassword) return [];
+    const acts = [];
+    view.querySelectorAll('[data-act]').forEach((el) => {
+      const a = el.getAttribute('data-act') || '';
+      if (SAVE_ALL_EXCLUDE.includes(a) || acts.includes(a) || el.disabled) return;
+      if (SAVE_ACT_RE.test(a) && typeof ACTIONS[a] === 'function') acts.push(a);
+    });
+    return acts;
+  }
+  function updateSaveBar() {
+    const bar = $('save-bar');
+    if (!bar) return;
+    const acts = saveAllActions();
+    bar.classList.toggle('hidden', acts.length === 0);
+    const lbl = $('save-bar-btn-label');
+    if (lbl) lbl.textContent = t('saveAllBtn');
+    const m = $('save-bar-msg');
+    if (!acts.length) { S.saveBar = 'idle'; if (m) m.textContent = ''; return; }
+    if (m) m.textContent = S.saveBar === 'saved' ? t('allSaved') : S.saveBar === 'dirty' ? t('unsavedHint') : '';
+  }
+  function saveBarDirty() {
+    if (!saveAllActions().length) return;
+    if (S.saveBar === 'saved') clearTimeout(saveBarSaved.timer);
+    S.saveBar = 'dirty';
+    const m = $('save-bar-msg');
+    if (m) m.textContent = t('unsavedHint');
+  }
+  function saveBarSaved() {
+    if (!saveAllActions().length) return;
+    S.saveBar = 'saved';
+    const m = $('save-bar-msg');
+    if (m) m.textContent = t('allSaved');
+    clearTimeout(saveBarSaved.timer);
+    saveBarSaved.timer = setTimeout(() => { S.saveBar = 'idle'; updateSaveBar(); }, 4000);
+  }
+  ACTIONS.saveAll = async () => {
+    const acts = saveAllActions();
+    if (!acts.length) return;
+    const btn = $('save-bar-btn');
+    if (btn) btn.disabled = true;
+    const m = $('save-bar-msg');
+    if (m) m.textContent = t('savingAll');
+    try {
+      for (const a of acts) await ACTIONS[a]({}, null);
+      saveBarSaved();
+    } catch (e) {
+      if (m) m.textContent = t('unsavedHint');
+      toast(typeof vError === 'function' ? vError(e.message) : e.message, 'error');
+    } finally { if (btn && btn.isConnected) btn.disabled = false; }
+  };
+  // Any edit inside the route view marks the bar as dirty (dropdown picks included:
+  // ddPick dispatches input/change on the hidden input of the box).
+  const saveBarEdit = (e) => {
+    const x = e.target;
+    if (x instanceof Element && x.closest('#view') && x.matches('input, textarea, select')) saveBarDirty();
+  };
+  document.addEventListener('input', saveBarEdit, true);
+  document.addEventListener('change', saveBarEdit, true);
 
   const _origBcPause = ACTIONS.bcPause;
   ACTIONS.bcPause = async (...a) => {
@@ -1970,22 +2036,50 @@
     const el = e.target.closest('[data-act]');
     if (!el) return;
     const fn = ACTIONS[el.getAttribute('data-act')];
-    if (fn && !el.disabled) { e.preventDefault(); Promise.resolve(fn(el.dataset, el)).catch(err => toast(typeof vError === 'function' ? vError(err.message) : err.message, 'error')); }
+    if (fn && !el.disabled) {
+      e.preventDefault();
+      Promise.resolve(fn(el.dataset, el))
+        .then(() => { if (SAVE_ACT_RE.test(el.getAttribute('data-act') || '')) saveBarSaved(); })
+        .catch(err => toast(typeof vError === 'function' ? vError(err.message) : err.message, 'error'));
+    }
   });
 
-  // Touch keyboards and mobile viewport changes can fire before "click" lands on an
-  // option, so a pick is also accepted on pointerdown.
-  function ddPickFromEvent(e) {
-    const opt = e.target instanceof Element ? e.target.closest('#dd-panel [data-act="ddPick"]') : null;
-    if (!opt || !DD.openBox) return;
-    e.preventDefault();
+  // A pick is committed on pointerup, never on pointerdown: pointerdown must not
+  // preventDefault, so the option list keeps its native touch scrolling. A drag
+  // that moves past DD_PRESS_PX is a scroll gesture, not a selection.
+  const DD_PRESS_PX = 12;
+  function ddPressStart(id, x, y, target) {
+    const opt = target instanceof Element ? target.closest('#dd-panel [data-act="ddPick"]') : null;
+    DD.press = opt && DD.openBox ? { id: id, x: x, y: y, opt: opt } : null;
+  }
+  function ddPressMove(id, x, y) {
+    if (!DD.press || DD.press.id !== id) return;
+    if (Math.hypot(x - DD.press.x, y - DD.press.y) > DD_PRESS_PX) DD.press = null;
+  }
+  function ddPressEnd(id, x, y, target) {
+    const press = DD.press;
+    DD.press = null;
+    if (!press || !DD.openBox || press.id !== id) return;
+    const opt = target instanceof Element ? target.closest('#dd-panel [data-act="ddPick"]') : null;
+    if (!opt || opt !== press.opt) return;
+    if (Math.hypot(x - press.x, y - press.y) > DD_PRESS_PX) return;
     // The option disappears with the panel, so the browser retargets the trailing click
     // to whatever now sits under the finger (often the modal backdrop). Swallow it once.
     DD.swallowClickUntil = Date.now() + 700;
     ACTIONS.ddPick(opt.dataset, opt);
   }
-  document.addEventListener('pointerdown', ddPickFromEvent);
-  if (!('PointerEvent' in window)) document.addEventListener('touchstart', ddPickFromEvent, { passive: false });
+  function ddPressCancel() { DD.press = null; }
+  document.addEventListener('pointerdown', (e) => ddPressStart(e.pointerId, e.clientX, e.clientY, e.target), { passive: true });
+  document.addEventListener('pointermove', (e) => ddPressMove(e.pointerId, e.clientX, e.clientY), { passive: true });
+  document.addEventListener('pointerup', (e) => ddPressEnd(e.pointerId, e.clientX, e.clientY, e.target));
+  document.addEventListener('pointercancel', ddPressCancel);
+  if (!('PointerEvent' in window)) {
+    const touchPt = (e) => e.changedTouches && e.changedTouches[0];
+    document.addEventListener('touchstart', (e) => { const p = touchPt(e); if (p) ddPressStart(p.identifier, p.clientX, p.clientY, e.target); }, { passive: true });
+    document.addEventListener('touchmove', (e) => { const p = touchPt(e); if (p) ddPressMove(p.identifier, p.clientX, p.clientY); }, { passive: true });
+    document.addEventListener('touchend', (e) => { const p = touchPt(e); if (p) ddPressEnd(p.identifier, p.clientX, p.clientY, e.target); });
+    document.addEventListener('touchcancel', ddPressCancel);
+  }
 
   document.addEventListener('click', (e) => {
     if (!DD.swallowClickUntil) return;
@@ -2077,8 +2171,8 @@
     const route = ROUTES.includes(h) ? h : 'dashboard';
     const routeChanged = route !== S.route;
     S.route = typeof visibleRoute === 'function' && !visibleRoute(route) ? 'dashboard' : route;
-    if (!S.token) { renderLogin(); return; }
-    if (S.mustChangePassword) { renderPasswordSetup(); return; }
+    if (!S.token) { renderLogin(); updateSaveBar(); return; }
+    if (S.mustChangePassword) { renderPasswordSetup(); updateSaveBar(); return; }
     renderShell();
     if (routeChanged) window.scrollTo({ top: 0, behavior: 'smooth' });
   }
