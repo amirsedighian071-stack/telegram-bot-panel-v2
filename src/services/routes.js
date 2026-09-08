@@ -2,7 +2,13 @@ import { refreshMarketRates } from "./rates.js";
 import { playDice } from "./engagement.js";
 import { Hono } from "hono";
 import { requireAuth } from "../auth.js";
-import { getUser, getSettings } from "../kv.js";
+import {
+  getUser,
+  getSettings,
+  getTicket,
+  putTicket,
+  ticketAppendUser,
+} from "../kv.js";
 import { enabled } from "../config.js";
 import { tgApi, resolveToken } from "../bot-api.js";
 import { fileResponse } from "../media.js";
@@ -133,7 +139,12 @@ admin.use("*", async (c, next) => {
   assert(enabled(await getSettings(c.env), "services"), "module_disabled", 403);
   await next();
 });
-admin.get("/bootstrap", async (c) => {
+// Counting every record scans the whole store, so the result is briefly memoised and
+// the panel skips it entirely for tabs that only need provider metadata.
+let countsCache = { at: 0, value: null };
+async function serviceCounts(env) {
+  if (countsCache.value && Date.now() - countsCache.at < 5000)
+    return countsCache.value;
   const types = [
     "panel",
     "plan",
@@ -145,8 +156,25 @@ admin.get("/bootstrap", async (c) => {
     "request",
   ];
   const data = Object.fromEntries(
-    await Promise.all(types.map(async (t) => [t, await list(c.env, t)])),
+    await Promise.all(types.map(async (t) => [t, await list(env, t)])),
   );
+  const value = {
+    panels: data.panel.length,
+    plans: data.plan.length,
+    services: data.service.length,
+    pending: data.operation.filter((o) =>
+      ["queued", "sending", "review"].includes(o.status),
+    ).length,
+    receipts: data.payment.filter((p) => p.status === "receipt_review").length,
+    stock: data.stock.filter((s) => s.status === "available").length,
+    requests: data.request.filter((r) => r.status === "pending").length,
+    wallets: data.account.length,
+  };
+  countsCache = { at: Date.now(), value };
+  return value;
+}
+admin.get("/bootstrap", async (c) => {
+  const withCounts = c.req.query("counts") !== "0";
   return result(c, {
     settings: await serviceSettings(c.env),
     providers: PROVIDERS,
@@ -155,19 +183,18 @@ admin.get("/bootstrap", async (c) => {
       vault: !!c.env.VAULT_KEY,
       backup: !!c.env.BACKUPS && !!c.env.BACKUP_PASSWORD,
     },
-    counts: {
-      panels: data.panel.length,
-      plans: data.plan.length,
-      services: data.service.length,
-      pending: data.operation.filter((o) =>
-        ["queued", "sending", "review"].includes(o.status),
-      ).length,
-      receipts: data.payment.filter((p) => p.status === "receipt_review")
-        .length,
-      stock: data.stock.filter((s) => s.status === "available").length,
-      requests: data.request.filter((r) => r.status === "pending").length,
-      wallets: data.account.length,
-    },
+    counts: withCounts
+      ? await serviceCounts(c.env)
+      : {
+          panels: 0,
+          plans: 0,
+          services: 0,
+          pending: 0,
+          receipts: 0,
+          stock: 0,
+          requests: 0,
+          wallets: 0,
+        },
     source: {
       repository: "Mmd-Amir/Faoxima",
       commit: "814344b017f19285574bec323d497a4612446bad",
@@ -550,14 +577,74 @@ portal.get("/bootstrap", async (c) => {
   const user = c.get("customer"),
     s = await serviceSettings(c.env),
     a = await account(c.env, user.id),
-    v2 = await getSettings(c.env);
+    v2 = await getSettings(c.env),
+    ticket = await getTicket(c.env, user.id);
   return result(c, {
     settings: publicSettings(s),
     user: { id: user.id, name: user.firstName, lang: user.lang },
     account: { ...a, available: available(a) },
     gate: await customerGate(c.env, user),
     botUsername: v2.botUsername,
+    support: {
+      enabled: enabled(v2, "support"),
+      unread: supportUnread(ticket),
+      total: (ticket?.messages || []).length,
+    },
   });
+});
+// Mini App support desk: messages land in the same panel inbox the bot uses, and
+// the administrator reply is delivered both here and in the Telegram chat.
+function supportUnread(ticket) {
+  const seen = ticket?.userSeenAt || 0;
+  return (ticket?.messages || []).filter((m) => m.s === "a" && m.at > seen)
+    .length;
+}
+function supportView(ticket) {
+  return {
+    open: ticket ? ticket.open !== false : true,
+    messages: (ticket?.messages || []).slice(-60).map((m) => ({
+      from: m.s === "a" ? "support" : "customer",
+      text: m.t,
+      at: m.at,
+    })),
+    unread: 0,
+  };
+}
+portal.get("/support", async (c) => {
+  const user = c.get("customer");
+  const ticket = await getTicket(c.env, user.id);
+  if (ticket && supportUnread(ticket)) {
+    ticket.userSeenAt = Date.now();
+    await putTicket(c.env, ticket);
+  }
+  return result(c, {
+    support: supportView(ticket),
+    enabled: enabled(await getSettings(c.env), "support"),
+  });
+});
+portal.post("/support", async (c) => {
+  const user = c.get("customer");
+  await limited(c.env, "support-msg:" + user.id, 10, 60);
+  assert(enabled(await getSettings(c.env), "support"), "support_disabled");
+  const text = str((await body(c)).text, 2000);
+  assert(text, "support_message_required");
+  const ticket = await ticketAppendUser(
+    c.env,
+    { id: user.id, firstName: user.firstName },
+    text,
+  );
+  ticket.userSeenAt = Date.now();
+  await putTicket(c.env, ticket);
+  const settings = await serviceSettings(c.env);
+  if (settings.reportChat) {
+    const token = await resolveToken(c.env);
+    if (token)
+      await tgApi(token, "sendMessage", {
+        chat_id: settings.reportChat,
+        text: `💬 پیام پشتیبانی از مینی‌اپ / Mini App support message\n${user.firstName || ""} · ${user.id}\n\n${text}`,
+      }).catch(() => {});
+  }
+  return result(c, { support: supportView(ticket) });
 });
 portal.post("/rules", async (c) =>
   result(c, {

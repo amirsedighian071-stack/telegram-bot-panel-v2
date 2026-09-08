@@ -20,7 +20,17 @@ const vLines = value => String(value).split('\n').map(v => v.trim()).filter(Bool
 const vList = value => String(value).split(/[,،\s]+/).map(v => v.trim()).filter(Boolean);
 const vMoney = n => `${fmtNum(n)} ${L('تومان', 'toman')}`;
 const vEmpty = (message, icon = 'inbox') => `<div class="v-empty"><span class="v-icon">${vIcon(icon)}</span><p>${message}</p></div>`;
-const vSection = (title, inner, buttons = '') => `<section class="${CLS.card} p-5 md:p-6"><div class="flex items-center justify-between gap-3 mb-5"><h3 class="text-sm font-bold">${title}</h3><div class="flex gap-2 flex-wrap">${buttons}</div></div>${inner}</section>`;
+// Every workspace block is an accordion: the arrow collapses it and the state is remembered.
+let vSecOpenDefault = true;
+const vSectionDefault = (open) => { vSecOpenDefault = open !== false; };
+function vSecId(title) {
+  const text = String(title).replace(/<[^>]*>/g, '');
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0;
+  return 's' + hash.toString(36);
+}
+const vSection = (title, inner, buttons = '', opts = {}) =>
+  accPanel(opts.group || 'v', opts.id || vSecId(title), title, inner, buttons, { open: opts.open !== undefined ? opts.open : vSecOpenDefault, icon: opts.icon });
 const MODULE_LABELS = { catalog: ['محصولات و فایل‌ها','Catalog'], shop: ['فروش و سفارش','Commerce'], channel: ['انتشار و زمان‌بندی','Publishing'], moderation: ['امنیت گروه‌ها','Moderation'], relay: ['حذف فوروارد','Relay'], crm: ['باشگاه مشتریان','Loyalty'], faq: ['پرسش‌های متداول','FAQ'], learning: ['پیشرفت آموزشی','Learning'], broadcast: ['ارسال همگانی','Broadcast'], support: ['پشتیبانی','Support'], menu: ['منو و دکمه‌ها','Menus'] };
 const vModuleName = key => MODULE_LABELS[key]?.[S.lang === 'en' ? 1 : 0] || key;
 function vError(code) {

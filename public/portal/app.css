@@ -723,3 +723,14 @@ header .subtitle {
 .page-hidden * {
   animation-play-state: paused !important;
 }
+
+/* Support desk */
+.support-thread { display: flex; flex-direction: column; gap: 12px; max-height: 52vh; overflow-y: auto; padding-inline-end: 4px; }
+.support-bubble { border-radius: 16px; padding: 12px 14px; border: 1px solid rgba(148, 163, 184, .22); background: rgba(148, 163, 184, .06); max-width: 92%; }
+.support-bubble.from-me { margin-inline-start: auto; border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.support-bubble.from-support { margin-inline-end: auto; }
+.support-bubble p { margin: 6px 0 0; font-size: 13px; line-height: 2; white-space: pre-wrap; word-break: break-word; }
+.support-who { font-size: 11px; font-weight: 700; opacity: .75; }
+.support-bubble time { display: block; margin-top: 6px; font-size: 10px; opacity: .55; }
+.support-form textarea { width: 100%; }
+.nav-badge { display: inline-block; min-width: 16px; padding: 0 4px; margin-inline-start: 4px; border-radius: 999px; background: var(--danger, #f43f5e); color: #fff; font-size: 10px; line-height: 16px; }

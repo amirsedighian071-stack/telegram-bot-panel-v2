@@ -51,7 +51,7 @@ test('profile-scoped locks do not leak into other modes; global locks remain',as
 test('product deep link resumes after passing all membership locks',async()=>{
   const p=await product({price:0});await h.settings({requiredChats:{enabled:true,targets:[{chatId:'@first_channel',scope:'all',url:''}]}});tg.members.set('@first_channel:42',{status:'left'});
   await h.msg(42,'/start p_'+p.id);assert.equal((await getUser(h.env,42)).pendingStart,'p_'+p.id);assert.equal(tg.sent().some(c=>c.payload.text?.includes('📦 محصول تست')),false);
-  tg.members.set('@first_channel:42',{status:'member'});await h.cb(42,'chan:check:42');assert(tg.sent().some(c=>c.payload.text?.includes('📦 محصول تست')));assert.equal((await getUser(h.env,42)).pendingStart,'');
+  tg.members.set('@first_channel:42',{status:'member'});await h.cb(42,'chan:check:42');assert(tg.delivered().some(c=>c.payload.text?.includes('📦 محصول تست')));assert.equal((await getUser(h.env,42)).pendingStart,'');
 });
 test('direct multipart photo upload returns reusable Telegram file ID, never bot URL',async()=>{
   await h.settings({uploads:{chatId:'@storage_channel'}});const form=new FormData();form.set('kind','photo');form.set('file',new File([new Uint8Array([255,216,255,0])],'pic.jpg',{type:'image/jpeg'}));
@@ -187,7 +187,7 @@ test('channel auto-poster rejects repost cycles',async()=>{
   assert.equal((await h.api('POST','/studio/feeds',{title:'B',type:'channel',sourceChatId:'@channel_b',destinations:['@channel_a']})).status,400);
 });
 test('FAQ and learning templates provide real bot interactions',async()=>{
-  await h.settings({botPurpose:'faq'});const f=await h.api('POST','/studio/faq',{question:'پرسش',answer:'پاسخ واقعی'});await h.msg(42,'/start');await h.cb(42,'faq:'+f.data.faq.id);assert(tg.sent().some(c=>c.payload.text==='پاسخ واقعی'));
+  await h.settings({botPurpose:'faq'});const f=await h.api('POST','/studio/faq',{question:'پرسش',answer:'پاسخ واقعی'});await h.msg(42,'/start');await h.cb(42,'faq:'+f.data.faq.id);assert(tg.delivered().some(c=>c.payload.text==='پاسخ واقعی'));
   await h.settings({botPurpose:'education'});const p=await product({price:0});await h.cb(42,'download:'+p.id);await h.cb(42,'learn:'+p.id);await h.cb(42,'learn:'+p.id);assert.equal((await allEntities(h.env,'progress')).length,1);
 });
 

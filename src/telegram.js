@@ -7,7 +7,7 @@ import {
   getTicket, ticketAppendUser,
 } from './kv.js';
 import { getJson, putJson } from './kv.js';
-import { tgApi, resolveToken, sendToUser } from './bot-api.js';
+import { tgApi, resolveToken, sendToUser, beginMessageEdit, endMessageEdit } from './bot-api.js';
 export { tgApi, resolveToken, sendToUser } from './bot-api.js';
 import { membershipGate, sendMembershipLock, joinUrl } from './gate.js';
 import { PURPOSES, enabled, text as tr, assert } from './config.js';
@@ -269,6 +269,16 @@ async function showPage(token, chatId, messageId, menu, pageId, lang, settings, 
   return tgApi(token, 'editMessageText', { chat_id: chatId, message_id: messageId, text: `${sm.title ? sm.title + '\n\n' : ''}${sm.text}`, reply_markup: pageMarkup(tagButtons(withSupport(sm.buttons, settings, lang), pageId), { withBack: true, T: BOT_T[lang] }), disable_web_page_preview: true });
 }
 async function onCallback(env, cb, token, settings) {
+  const source = cb.message;
+  // A tap refreshes the message it came from. Media captions cannot become text,
+  // and group messages keep their own flow, so both are left untouched.
+  const media = !!source && !!(source.photo || source.video || source.document || source.animation || source.audio || source.sticker || source.voice);
+  const editable = !!source && !media && Number(source.chat?.id) > 0 && !!source.message_id;
+  if (editable) beginMessageEdit(source.chat.id, source.message_id);
+  try { return await handleCallback(env, cb, token, settings); }
+  finally { if (editable) endMessageEdit(); }
+}
+async function handleCallback(env, cb, token, settings) {
   if (!cb.from || cb.from.is_bot) return;
   if (await captchaCallback(env, token, cb, settings)) return;
   const { user } = await touchUser(env, cb.from), lang = effectiveLang(user, settings), T = BOT_T[lang];

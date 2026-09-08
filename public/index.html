@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fa" dir="rtl" class="dark" data-theme="dark" data-panel-version="3.1.0">
+<html lang="fa" dir="rtl" class="dark" data-theme="dark" data-panel-version="3.1.1">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -24,8 +24,8 @@
       } catch (e) {}
     })();
 </script>
-  <link rel="stylesheet" href="/panel.css?v=3.1.0">
-  <link rel="stylesheet" href="/studio.css?v=3.1.0">
+  <link rel="stylesheet" href="/panel.css?v=3.1.1">
+  <link rel="stylesheet" href="/studio.css?v=3.1.1">
   <style>
     html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
     body { touch-action: manipulation; overscroll-behavior-y: contain; }
@@ -83,13 +83,13 @@
 
     .bp-noanim, .bp-noanim * { transition: none !important; }
 
-    #dd-panel { position: fixed; z-index: 70; overflow-y: auto; overscroll-behavior: contain; border-radius: .875rem; border: 1px solid #e2e8f0; background: #fff; box-shadow: 0 12px 32px rgb(2 6 23 / .18); padding: .375rem; -webkit-overflow-scrolling: touch; }
+    #dd-panel { position: fixed; z-index: 90; touch-action: pan-y; overflow-y: auto; overscroll-behavior: contain; border-radius: .875rem; border: 1px solid #e2e8f0; background: #fff; box-shadow: 0 12px 32px rgb(2 6 23 / .18); padding: .375rem; -webkit-overflow-scrolling: touch; }
     .dark #dd-panel { background: #0f172a; border-color: #334155; box-shadow: 0 12px 32px rgb(0 0 0 / .5); }
     html[data-theme="ocean"] #dd-panel { background: #0e2a47; border-color: #1a3a5e; }
     html[data-theme="violet"] #dd-panel { background: #231e44; border-color: #322b58; }
     html[data-theme="forest"] #dd-panel { background: #0e2f21; border-color: #173d2a; }
     html[data-theme="sunset"] #dd-panel { background: #2a1a11; border-color: #3d2718; }
-    .dd-opt { display: flex; align-items: center; gap: .5rem; width: 100%; padding: .625rem .75rem; font-size: .875rem; line-height: 1.4; border-radius: .625rem; color: #334155; cursor: pointer; text-align: start; }
+    .dd-opt { display: flex; touch-action: manipulation; align-items: center; gap: .5rem; width: 100%; padding: .625rem .75rem; font-size: .875rem; line-height: 1.4; border-radius: .625rem; color: #334155; cursor: pointer; text-align: start; }
     .dark .dd-opt { color: #e2e8f0; }
     .dd-opt:hover { background: #f1f5f9; }
     .dark .dd-opt:hover { background: rgb(148 163 184 / .14); }
@@ -277,9 +277,9 @@
 
 
 
-<script src="/panel.js?v=3.1.0"></script>
-<script src="/studio.js?v=3.1.0"></script>
-<script src="/services.js?v=3.1.0"></script>
+<script src="/panel.js?v=3.1.1"></script>
+<script src="/studio.js?v=3.1.1"></script>
+<script src="/services.js?v=3.1.1"></script>
 <script>
 (async function () {
   if (S.token) { try { const session = await api('/auth/session'); S.mustChangePassword = !!session.requiresPasswordChange; if (!S.mustChangePassword) await initV2(); } catch (e) {} }
