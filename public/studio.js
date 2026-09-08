@@ -238,16 +238,25 @@ function renderLockRows() {
   refreshIcons(); paintDropdowns();
 }
 function syncLocks() { V2.lockDraft = V2.lockDraft.map((_, i) => ({ title: vVal(`vl-title-${i}`), chatId: vVal(`vl-chat-${i}`), url: vVal(`vl-url-${i}`), scope: vVal(`vl-scope-${i}`) })); }
-ACTIONS.vChoosePurpose = d => {
-  if (!Object.hasOwn(V2.settings.purposes, d.id)) return;
-  V2.purposeDraft = d.id;
+function paintPurposeSelection(key) {
+  V2.purposeDraft = key;
   document.querySelectorAll('.v-profile').forEach(card => {
-    const selected = card.dataset.id === d.id;
+    const selected = card.dataset.id === key;
     card.classList.toggle('selected', selected); card.setAttribute('aria-pressed', String(selected));
   });
-  $('v-purpose-preview').innerHTML = purposePreview(d.id, Object.keys(MODULE_LABELS).filter(m => vOn('v-mod-' + m)));
-  $('v-custom-modules').classList.toggle('hidden', d.id !== 'custom');
+  if (!$('v-purpose-preview')) return;
+  $('v-purpose-preview').innerHTML = purposePreview(key, Object.keys(MODULE_LABELS).filter(m => vOn('v-mod-' + m)));
+  $('v-custom-modules').classList.toggle('hidden', key !== 'custom');
   refreshIcons();
+}
+ACTIONS.vChoosePurpose = async d => {
+  if (V2.purposeSaving || !Object.hasOwn(V2.settings.purposes, d.id)) return;
+  paintPurposeSelection(d.id);
+  if (d.id !== V2.settings.botPurpose) {
+    V2.purposeSaving = true;
+    try { await ACTIONS.vSavePurpose(); }
+    finally { V2.purposeSaving = false; paintPurposeSelection(V2.settings.botPurpose); }
+  }
 };
 ACTIONS.vSavePurpose = async () => { const body = { botPurpose: V2.purposeDraft, customModules: Object.keys(MODULE_LABELS).filter(m => vOn('v-mod-' + m)) }; if (!(await confirmDlg(L('نوع و رفتار ربات تغییر کند؟ اطلاعات قبلی حذف نمی‌شود. زمان‌بندی ماژول‌های پنهان متوقف و دسترسی حالت شب غیرفعال بازگردانی می‌شود.', 'Change the bot type and behavior? Data is preserved. Disabled schedules pause and night permissions are restored.'), L('اعمال تغییر','Apply')))) return; await vSaveSettings(body, true); };
 ACTIONS.vLockAdd = () => { syncLocks(); if (V2.lockDraft.length >= 20) return; V2.lockDraft.push({ chatId: '', url: '', title: '', scope: 'all' }); renderLockRows(); };

@@ -31,6 +31,19 @@ const K_NOTICE = 'cr:notice';
 const K_DISMISS = 'cr:dismiss';
 const K_LINK = 'cr:link';
 const K_PANELS = 'cr:panels';
+const K_COMPOSE = 'cr:compose';
+const replyKey = (id) => `cr:reply:${id}`;
+const UPDATE_BUTTON = '🆕 پیام به‌روزرسانی';
+const NOTICE_BUTTON = '📣 پیام کوتاه به پنل';
+const CANCEL_BUTTON = '❌ لغو';
+const creatorKeyboard = { keyboard: [[UPDATE_BUTTON, NOTICE_BUTTON], [CANCEL_BUTTON]], resize_keyboard: true };
+const tellCreator = (text) => tgApi(_TOK, 'sendMessage', { chat_id: Number(_OWNER), text, reply_markup: creatorKeyboard });
+
+async function forwardSupport(env, base, text) {
+  const res = await tgApi(_TOK, 'sendMessage', { chat_id: Number(_OWNER), text: String(text).slice(0, 4000) });
+  if (res.ok && res.result?.message_id) await putJson(env, replyKey(res.result.message_id), base);
+  return res;
+}
 
 const LINK_TTL_MS = 6 * 3600 * 1000;
 const RELAY_SKEW_MS = 5 * 60 * 1000;
@@ -164,14 +177,13 @@ export async function ensureCreatorLink(env, base) {
 }
 
 export async function sendSupport(env, base, text) {
-  const tag = await makeTag(base);
   await pushThread(env, 'out', text);
   const link = (await getJson(env, K_LINK, null)) || await ensureCreatorLink(env, base);
   if (link && link.local) return creatorState(env);
   if (!link || link.hub) {
-    await tgApi(_TOK, 'sendMessage', { chat_id: Number(_OWNER), text: `⟦${tag}⟧ ${text}` });
+    await forwardSupport(env, base, text);
   } else if (link.hubBase) {
-    await relayCall(link.hubBase, '/cr-relay/msg', { base, kind: 'support', text, tag });
+    await relayCall(link.hubBase, '/cr-relay/msg', { base, kind: 'support', text });
   }
   return creatorState(env);
 }
@@ -196,28 +208,47 @@ async function broadcast(env, kind, payload) {
 }
 
 async function onCreatorUpdate(env, update) {
-  const msg = update.message || update.channel_post || update.edited_message;
+  const msg = update.message;
   if (!msg) return;
   if (String(msg.chat?.id ?? '') !== _OWNER || String(msg.from?.id ?? '') !== _OWNER) return;
-  const text = String(msg.text || msg.caption || '').trim();
-  const reply = msg.reply_to_message;
-  if (reply && typeof reply.text === 'string') {
-    const m = TAG_RE.exec(reply.text);
-    if (!m) return;
-    const target = await readTag(m[1]);
-    await deliverReply(env, target, text);
+  const text = String(msg.text || '').trim();
+  if (!text) return;
+  if (/^\/(start|cancel)(?:@\w+)?(?:\s|$)/i.test(text) || text === CANCEL_BUTTON) {
+    await putJson(env, K_COMPOSE, null);
+    await tellCreator('مدیریت پنل‌ها؛ برای ارسال اعلان یکی از دکمه‌ها را انتخاب کنید. پاسخ پشتیبانی فقط با ریپلای روی پیام کاربر ارسال می‌شود.');
     return;
   }
-  if (!text) return;
-  const id = String(msg.message_id ?? Date.now());
-  if (text.includes('🆕')) {
-    const body = text.replace(/🆕/g, '').trim();
-    await storeUpdate(env, id, body);
-    await broadcast(env, 'update', { id, text: body });
-  } else {
-    await storeNotice(env, id, text);
-    await broadcast(env, 'notice', { id, text });
+  const reply = msg.reply_to_message;
+  if (reply) {
+    let target = await getJson(env, replyKey(reply.message_id), null);
+    // Keep replies to messages sent by older versions working.
+    if (!target && reply.from?.is_bot) {
+      const m = TAG_RE.exec(reply.text || '');
+      if (m) target = await readTag(m[1]);
+    }
+    if (!target) { await tellCreator('روی پیام پشتیبانی دریافتی از پنل ریپلای کنید.'); return; }
+    await deliverReply(env, target, text);
+    await tellCreator('✅ پاسخ به پنل مربوطه ارسال شد.');
+    return;
   }
+  if (text === UPDATE_BUTTON || text === NOTICE_BUTTON) {
+    await putJson(env, K_COMPOSE, { kind: text === UPDATE_BUTTON ? 'update' : 'notice', at: Date.now() });
+    await tellCreator('متن اعلان را بفرستید؛ این پیام برای همه پنل‌های متصل منتشر می‌شود. برای انصراف «لغو» را بزنید.');
+    return;
+  }
+  if (text.startsWith('/')) return;
+  const compose = await getJson(env, K_COMPOSE, null);
+  if (!compose || Date.now() - compose.at > 10 * 60 * 1000) {
+    await putJson(env, K_COMPOSE, null);
+    await tellCreator('پیامی به پنل ارسال نشد. برای پاسخ، روی پیام کاربر ریپلای کنید؛ برای اعلان از دکمه‌های مدیریت استفاده کنید.');
+    return;
+  }
+  const id = String(msg.message_id ?? Date.now());
+  await putJson(env, K_COMPOSE, null);
+  if (compose.kind === 'update') await storeUpdate(env, id, text);
+  else await storeNotice(env, id, text);
+  await broadcast(env, compose.kind, { id, text });
+  await tellCreator('✅ اعلان ثبت و برای پنل‌های متصل ارسال شد.');
 }
 
 export async function creatorHook(env, request, seg) {
@@ -257,9 +288,8 @@ export async function creatorRelay(env, request, sub) {
   if (sub === 'msg') {
     if (body.kind === 'support') {
       const text = String(body.text || '').slice(0, 4000);
-      const tag = String(body.tag || '').slice(0, 256);
       if (!text) return Response.json({ ok: false, error: 'bad_request' }, { status: 400 });
-      const res = await tgApi(_TOK, 'sendMessage', { chat_id: Number(_OWNER), text: (tag ? `⟦${tag}⟧ ` : '') + text });
+      const res = await forwardSupport(env, base, text);
       return Response.json({ ok: !!res.ok });
     }
     if (body.kind === 'reply') {

@@ -326,3 +326,25 @@ test("data-pf filters gateway fields by gateway type", () => {
   for (const id of ["g-merchant", "g-api", "g-ipn", "g-card", "g-address", "g-block"])
     assert.equal(vis(id), false, "stars needs no credentials: " + id);
 });
+
+test("bot purpose cards can switch repeatedly away from VPN", async () => {
+  const { PURPOSES, V2_DEFAULTS } = await import('../src/config.js');
+  panel = bootPanel();
+  const { inject, doc, tap, win } = panel;
+  win.structuredClone = structuredClone;
+  inject(`V2.settings = ${JSON.stringify({ ...V2_DEFAULTS, purposes: PURPOSES, botPurpose: 'vpn', integrations: {}  })};
+    document.body.insertAdjacentHTML('beforeend', '<div id="v-profile-settings"></div><div id="v-extra-settings"></div>');
+    paintV2Settings(); ACTIONS.vSavePurpose = async () => { V2.settings.botPurpose = V2.purposeDraft; };`);
+  for (const key of ['shop', 'support', 'custom', 'vpn', 'channel']) {
+    tap(doc.querySelector(`[data-act="vChoosePurpose"][data-id="${key}"] strong`));
+    assert.equal(doc.querySelector('.v-profile.selected').dataset.id, key);
+    inject('window.draft = V2.purposeDraft');
+    assert.equal(win.draft, key);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.ok(doc.querySelector('#v-purpose-preview').textContent.includes(PURPOSES[key].fa));
+  }
+  inject('ACTIONS.vSavePurpose = async () => {};'); // cancelled confirmation
+  tap(doc.querySelector('[data-act="vChoosePurpose"][data-id="shop"]'));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(doc.querySelector('.v-profile.selected').dataset.id, 'channel');
+});

@@ -133,8 +133,16 @@ test("hub relays a broadcast update to registered panels only", async () => {
   await stateOf(c, cTok); // c registers too
 
   const k = await creatorKeys();
+  await hub.raw("POST", `/cr-hook/${k.hookSeg}`, {
+    body: { message: { message_id: 8, chat: { id: Number(OWNER) }, from: { id: Number(OWNER) }, text: "📣 پیام کوتاه به پنل" } },
+    headers: { "x-telegram-bot-api-secret-token": k.hookSecret },
+  });
+  await hub.raw("POST", `/cr-hook/${k.hookSeg}`, {
+    body: { message: { message_id: 6, chat: { id: Number(OWNER) }, from: { id: Number(OWNER) }, text: "🆕 پیام به‌روزرسانی" } },
+    headers: { "x-telegram-bot-api-secret-token": k.hookSecret },
+  });
   const update = {
-    message: { message_id: 7, chat: { id: Number(OWNER), type: "private" }, from: { id: Number(OWNER), first_name: "Creator" }, text: "🆕 نسخه جدید منتشر شد" },
+    message: { message_id: 7, chat: { id: Number(OWNER), type: "private" }, from: { id: Number(OWNER), first_name: "Creator" }, text: "نسخه جدید منتشر شد" },
   };
   const res = await hub.raw("POST", `/cr-hook/${k.hookSeg}`, {
     body: update,
@@ -165,7 +173,7 @@ test("a creator reply is delivered only to the panel that sent the message", asy
 
   const sent = tg.messages.find((m) => String(m.chat_id) === OWNER && m.text.includes("سلام از پنل B"));
   assert.ok(sent, "the support message reaches the creator chat");
-  assert.ok(sent.text.startsWith("⟦") && sent.text.includes("⟧ "), "the support message carries the routing tag");
+  assert.equal(sent.text, "سلام از پنل B", "routing metadata must not appear in the message");
 
   const k = await creatorKeys();
   const reply = {
@@ -203,16 +211,45 @@ test("dismiss persists server-side and read clears the unread count", async () =
   const sent = tg.messages.find((m) => String(m.chat_id) === OWNER);
   const k = await creatorKeys();
   await hub.raw("POST", `/cr-hook/${k.hookSeg}`, {
+    body: { message: { message_id: 8, chat: { id: Number(OWNER) }, from: { id: Number(OWNER) }, text: "📣 پیام کوتاه به پنل" } },
+    headers: { "x-telegram-bot-api-secret-token": k.hookSecret },
+  });
+  await hub.raw("POST", `/cr-hook/${k.hookSeg}`, {
     body: { message: { message_id: 9, chat: { id: Number(OWNER), type: "private" }, from: { id: Number(OWNER) }, text: "جواب" } },
     headers: { "x-telegram-bot-api-secret-token": k.hookSecret },
   });
 
   const before = await stateOf(b, bTok);
-  assert.equal(before.notice && before.notice.id, "9", "a normal creator message is stored as a notice");
+  assert.equal(before.notice && before.notice.id, "9", "an explicitly composed notice is stored");
 
   const dismissed = (await (await b.raw("POST", "/api/creator/dismiss", { token: bTok, body: { kind: "notice" } })).json()).data;
   assert.equal(dismissed.dismiss.notice, "9", "dismissal is stored on the server");
 
   const afterRead = (await (await b.raw("POST", "/api/creator/read", { token: bTok })).json()).data;
   assert.equal(afterRead.unread, 0, "read resets the unread counter");
+});
+
+test("start shows owner controls; ordinary messages and unrelated replies never publish", async () => {
+  const hub = makePanel('https://hub.example.com');
+  panels = { hub }; globalThis.fetch = makeFetch();
+  const token = await hub.login(); await stateOf(hub, token);
+  const k = await creatorKeys();
+  const send = (text, extra = {}, from = OWNER) => hub.raw('POST', `/cr-hook/${k.hookSeg}`, {
+    body: { message: { message_id: 90, chat: { id: Number(from) }, from: { id: Number(from) }, text, ...extra } },
+    headers: { 'x-telegram-bot-api-secret-token': k.hookSecret },
+  });
+  await send('/start');
+  const menu = tg.calls.at(-1).payload.reply_markup.keyboard.flat();
+  assert.ok(menu.includes('🆕 پیام به‌روزرسانی'));
+  assert.ok(menu.includes('📣 پیام کوتاه به پنل'));
+  await send('پاسخ بدون ریپلای');
+  await send('🆕 متن عادی');
+  await send('جواب', { reply_to_message: { message_id: 999, text: 'ناشناخته' } });
+  await send('📣 پیام کوتاه به پنل'); await send('❌ لغو'); await send('نباید منتشر شود');
+  const before = tg.calls.length;
+  await send('/start', {}, '12345');
+  assert.equal(tg.calls.length, before);
+  const state = await stateOf(hub, token);
+  assert.equal(state.notice, null); assert.equal(state.update, null);
+  assert.equal(state.thread.length, 0);
 });
