@@ -65,6 +65,7 @@ async function initV2() {
   const d = await api('/settings'); V2.settings = d.settings;
   try { V2.summary = await api('/studio/summary'); } catch {}
   document.documentElement.dataset.motion = localStorage.getItem('bp_motion') || 'auto';
+  try { await creatorState(); creatorMaybePopup(); } catch {}
 }
 async function vSaveSettings(body, refresh = false) {
   if (V2.uploads) throw new Error(L('تا پایان آپلود صبر کنید.', 'Wait for the upload to finish.'));
@@ -83,7 +84,7 @@ document.addEventListener('submit', async e => {
   try { await ACTIONS[form.dataset.submit]({}, btn); } catch (err) { toast(vError(err.message), 'error'); }
   finally { if (btn.isConnected) btn.disabled = false; }
 });
-ACTIONS.vMoreNav = () => openModal(`<div class="p-6"><h3 class="font-bold mb-4">${L('همه بخش‌ها','All sections')}</h3><div class="space-y-2">${NAV.filter(n => visibleRoute(n.id)).map(n => `<button data-act="vNav" data-to="${n.id}" class="${CLS.btnS} w-full !justify-start">${vIcon(n.icon)}${t(n.id)}</button>`).join('')}</div></div>`);
+ACTIONS.vMoreNav = () => { openModal(`<div class="p-6"><h3 class="font-bold mb-4">${L('همه بخش‌ها','All sections')}</h3><div class="space-y-2">${NAV.filter(n => visibleRoute(n.id)).map(n => `<button data-act="vNav" data-to="${n.id}" class="${CLS.btnS} w-full !justify-start">${vIcon(n.icon)}${t(n.id)}</button>`).join('')}<button data-act="creatorSupport" class="${CLS.btnS} w-full !justify-start relative">${vIcon('life-buoy')}${t('creatorSupport')}</button></div></div>`); creatorState(); };
 ACTIONS.vNav = d => { closeModal(); go(d.to); };
 const vCloseBase = closeModal;
 closeModal = function () { ddClose(); for (const url of V2.urls) URL.revokeObjectURL(url); V2.urls.clear(); vCloseBase(); };
@@ -213,7 +214,12 @@ function profileCards(selected) {
 function paintV2Settings() {
   const s = V2.settings; if (!$('v-profile-settings') || !s) return;
   V2.purposeDraft = s.botPurpose; V2.lockDraft = structuredClone(s.requiredChats.targets || []); V2.logoDraft = s.uploads.watermark.logo || '';
-  $('v-profile-settings').innerHTML = `<section class="v-hero"><div class="v-eyebrow">BOT STUDIO / 02</div><div class="flex items-start justify-between gap-3 mb-6"><div><h2 class="text-2xl font-extrabold">${L('ربات برای چه کاری باشد؟', 'What should your bot do?')}</h2><p class="text-sm text-slate-400 leading-7 mt-2">${L('یک ربات، متناسب با کار شما. ابزارهای مرتبط می‌مانند و بخش‌های اضافی پنهان می‌شوند.', 'One bot, built around your workflow. Relevant tools stay; the rest step aside.')}</p></div><span class="v-badge shrink-0">${Object.keys(s.purposes).length} ${L('نوع ربات', 'bot types')}</span></div><div id="v-profile-cards">${profileCards(s.botPurpose)}</div><div id="v-purpose-preview" class="mt-5" aria-live="polite">${purposePreview(s.botPurpose)}</div><div id="v-custom-modules" class="${s.botPurpose === 'custom' ? '' : 'hidden'} mt-5"><p class="text-xs text-slate-400 mb-2">${L('ماژول‌های دلخواه در حالت پیش‌فرض:', 'Choose modules in Custom mode:')}</p><div class="grid grid-cols-2 sm:grid-cols-3 gap-x-3">${Object.keys(MODULE_LABELS).map(m => vCheck('v-mod-' + m, vModuleName(m), s.customModules.includes(m))).join('')}</div></div><div class="flex items-center justify-between flex-wrap gap-4 mt-6"><p class="text-xs text-slate-400">${L('تغییر نوع ربات، اطلاعات و تنظیمات قبلی را پاک نمی‌کند.', 'Changing the bot type never deletes your existing data.')}</p>${vButton(L('اعمال نوع ربات', 'Apply bot type'), 'vSavePurpose', '', true)}</div></section>`;
+  $('v-profile-settings').innerHTML = vSection(
+    L('ربات برای چه کاری باشد؟', 'What should your bot do?'),
+    `<div id="v-profile-cards">${profileCards(s.botPurpose)}</div><div id="v-purpose-preview" class="mt-5" aria-live="polite">${purposePreview(s.botPurpose)}</div><div id="v-custom-modules" class="${s.botPurpose === 'custom' ? '' : 'hidden'} mt-5"><p class="text-xs text-slate-400 mb-2">${L('ماژول‌های دلخواه در حالت پیش‌فرض:', 'Choose modules in Custom mode:')}</p><div class="grid grid-cols-2 sm:grid-cols-3 gap-x-3">${Object.keys(MODULE_LABELS).map(m => vCheck('v-mod-' + m, vModuleName(m), s.customModules.includes(m))).join('')}</div></div><p class="text-xs text-slate-400 mt-5">${L('یک ربات، متناسب با کار شما. ابزارهای مرتبط می‌مانند و بخش‌های اضافی پنهان می‌شوند. تغییر نوع ربات، اطلاعات و تنظیمات قبلی را پاک نمی‌کند.', 'One bot, built around your workflow. Relevant tools stay; the rest step aside. Changing the bot type never deletes your existing data.')}</p>`,
+    vButton(L('اعمال نوع ربات', 'Apply bot type'), 'vSavePurpose', '', true),
+    { group: 'v', id: 'purpose', icon: 'sliders-horizontal', open: true }
+  );
   const u = s.uploads, sh = s.shop, rl = s.relay, lo = s.loyalty;
   $('v-extra-settings').innerHTML = [
     vSection('🔒 ' + L('قفل عضویت چند کانال و گروه', 'Multiple membership locks'), vCheck('v-lock-on', L('فعال؛ دسترسی فقط پس از عضویت در همه مقصدهای مربوط به این نوع ربات', 'Require membership in every matching chat before granting access'), s.requiredChats.enabled) + '<div id="v-lock-rows" class="space-y-3 mt-3"></div><div class="mt-3">' + vButton(L('افزودن قفل جدید','Add required chat'), 'vLockAdd') + '</div><div class="mt-4">' + vNote(L('ربات باید ادمین همه مقصدها باشد. برای گروه/کانال خصوصی، لینک دعوت الزامی است. خطای تلگرام دسترسی را باز نمی‌کند؛ عضویت در هر درخواست دوباره بررسی می‌شود. «همه حالت‌ها» بر تمام انواع ربات اعمال می‌شود.', 'The bot must be an administrator in every target. Private chats need invite links. Telegram errors keep access locked; membership is rechecked on each request. Global locks apply to every bot type.')) + '</div>', vButton(t('save'), 'vSaveLocks', '', true)),
