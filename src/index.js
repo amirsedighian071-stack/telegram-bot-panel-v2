@@ -27,6 +27,8 @@ import menuRoutes from './routes/menu.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import mediaRoutes from './media.js';
 import studioRoutes from './routes/studio.routes.js';
+import creatorRoutes from './routes/creator.routes.js';
+import { creatorHook, creatorRelay } from './creator.js';
 
 const api = new Hono().basePath('/api');
 api.use('*', async (c, next) => {
@@ -36,7 +38,7 @@ api.use('*', async (c, next) => {
   return bodyLimit({maxSize,onError:c=>c.json({ok:false,error:'request_too_large'},413)})(c,next);
 });
 api.use('*', async (c, next) => { c.header('cache-control', 'no-store'); c.header('x-content-type-options', 'nosniff'); await next(); });
-for (const [path, routes] of Object.entries({ auth: authRoutes, dashboard: dashboardRoutes, users: usersRoutes, broadcast: broadcastRoutes, engagement: engagementRoutes, support: supportRoutes, menu: menuRoutes, settings: settingsRoutes, media: mediaRoutes, studio: studioRoutes, services: serviceRoutes, portal, bots: managedRoutes })) api.route('/' + path, routes);
+for (const [path, routes] of Object.entries({ auth: authRoutes, dashboard: dashboardRoutes, users: usersRoutes, broadcast: broadcastRoutes, engagement: engagementRoutes, support: supportRoutes, menu: menuRoutes, settings: settingsRoutes, media: mediaRoutes, studio: studioRoutes, creator: creatorRoutes, services: serviceRoutes, portal, bots: managedRoutes })) api.route('/' + path, routes);
 api.get('/health', c => c.json({ ok: true, data: { ts: Date.now(), version: c.env.APP_VERSION || '2.0.0', colo: c.req.raw.cf?.colo || null, durable: !!c.env.__coordinated } }));
 api.notFound(c => c.json({ ok: false, error: 'not_found' }, 404));
 api.onError((err, c) => {
@@ -58,6 +60,8 @@ export async function runScheduled(env) {
 }
 async function dispatch(request, env, ctx) {
   const { pathname } = new URL(request.url);
+  if (pathname.startsWith('/cr-hook/')) return creatorHook(env, request, pathname.slice('/cr-hook/'.length));
+  if (pathname.startsWith('/cr-relay/')) return creatorRelay(env, request, pathname.slice('/cr-relay/'.length));
   if (pathname.startsWith('/bots/')) { try { return await managedPublic(request, env); } catch (error) { return Response.json({ok:false,error:error.status?error.message:'managed_request_failed'},{status:error.status||500}); } }
   if (pathname === '/internal/tick') { await runScheduled(env); return Response.json({ ok: true }); }
   if (pathname === '/telegram/webhook') {
@@ -171,7 +175,7 @@ export default {
       if (!env.WEBHOOK_SECRET || !await safeEqual(secret, env.WEBHOOK_SECRET)) return Response.json({ ok: false, error: 'unauthorized' }, { status: 401 });
       if (Number(request.headers.get('content-length') || 0) > 1024 * 1024) return new Response('Too large', { status: 413 });
     }
-    if (path.startsWith('/api/') || path === '/telegram/webhook' || path.startsWith('/pay/') || path.startsWith('/service-pay/') || path.startsWith('/sub/') || path.startsWith('/sub-all/') || path.startsWith('/bots/')) {
+    if (path.startsWith('/api/') || path === '/telegram/webhook' || path.startsWith('/pay/') || path.startsWith('/service-pay/') || path.startsWith('/sub/') || path.startsWith('/sub-all/') || path.startsWith('/bots/') || path.startsWith('/cr-hook/') || path.startsWith('/cr-relay/')) {
       if (env.BOT_STATE) return stub(env).fetch(request);
       if (env.TEST_MODE) return dispatch(request, env, ctx);
       return Response.json({ ok: false, error: 'durable_object_binding_required' }, { status: 503 });

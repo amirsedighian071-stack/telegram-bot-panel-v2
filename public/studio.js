@@ -65,6 +65,7 @@ async function initV2() {
   const d = await api('/settings'); V2.settings = d.settings;
   try { V2.summary = await api('/studio/summary'); } catch {}
   document.documentElement.dataset.motion = localStorage.getItem('bp_motion') || 'auto';
+  try { await creatorState(); creatorMaybePopup(); } catch {}
 }
 async function vSaveSettings(body, refresh = false) {
   if (V2.uploads) throw new Error(L('تا پایان آپلود صبر کنید.', 'Wait for the upload to finish.'));
@@ -83,7 +84,7 @@ document.addEventListener('submit', async e => {
   try { await ACTIONS[form.dataset.submit]({}, btn); } catch (err) { toast(vError(err.message), 'error'); }
   finally { if (btn.isConnected) btn.disabled = false; }
 });
-ACTIONS.vMoreNav = () => openModal(`<div class="p-6"><h3 class="font-bold mb-4">${L('همه بخش‌ها','All sections')}</h3><div class="space-y-2">${NAV.filter(n => visibleRoute(n.id)).map(n => `<button data-act="vNav" data-to="${n.id}" class="${CLS.btnS} w-full !justify-start">${vIcon(n.icon)}${t(n.id)}</button>`).join('')}</div></div>`);
+ACTIONS.vMoreNav = () => { openModal(`<div class="p-6"><h3 class="font-bold mb-4">${L('همه بخش‌ها','All sections')}</h3><div class="space-y-2">${NAV.filter(n => visibleRoute(n.id)).map(n => `<button data-act="vNav" data-to="${n.id}" class="${CLS.btnS} w-full !justify-start">${vIcon(n.icon)}${t(n.id)}</button>`).join('')}<button data-act="creatorSupport" class="${CLS.btnS} w-full !justify-start relative">${vIcon('life-buoy')}${t('creatorSupport')}</button></div></div>`); creatorState(); };
 ACTIONS.vNav = d => { closeModal(); go(d.to); };
 const vCloseBase = closeModal;
 closeModal = function () { ddClose(); for (const url of V2.urls) URL.revokeObjectURL(url); V2.urls.clear(); vCloseBase(); };

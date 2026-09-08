@@ -88,6 +88,12 @@
       expandAll: 'باز کردن همه', collapseAll: 'بستن همه',
       startText: 'متن شروع (/start)', helpText: 'راهنما (/help)', recentHist: 'ارسال‌های اخیر',
       version: 'نسخه',
+      creatorSupport: 'پشتیبانی سازنده', creatorChatTitle: 'گفتگو با سازنده پنل',
+      creatorInputPh: 'پیام خود را برای سازنده بنویسید…', creatorSend: 'ارسال',
+      creatorEmpty: 'هنوز پیامی رد و بدل نشده است.',
+      updateTitle: 'به‌روزرسانی جدید', updateLater: 'بعداً به‌روزرسانی می‌کنم',
+      updateDo: 'به‌روزرسانی', updateNever: 'دیگر این پیام را نشان نده',
+      noticeTitle: 'پیام سازنده', noticeGotIt: 'متوجه شدم',
     },
     en: {
       appName: 'Bot Admin Panel', appShort: 'BotPanel', poweredBy: 'Powered by Cloudflare Workers',
@@ -175,6 +181,12 @@
       expandAll: 'Expand all', collapseAll: 'Collapse all',
       startText: 'Start text (/start)', helpText: 'Help (/help)', recentHist: 'Recent sends',
       version: 'Version',
+      creatorSupport: 'Creator support', creatorChatTitle: 'Chat with the panel creator',
+      creatorInputPh: 'Write your message to the creator…', creatorSend: 'Send',
+      creatorEmpty: 'No messages exchanged yet.',
+      updateTitle: 'New update', updateLater: 'Update later',
+      updateDo: 'Update', updateNever: "Don't show this again",
+      noticeTitle: 'Message from the creator', noticeGotIt: 'Got it',
     },
   };
 
@@ -203,6 +215,7 @@
   const CF = { resolve: null };
   const MODAL = { ctx: {} };
   const DD = { openBox: null, lastBox: null, swallowClickUntil: 0, press: null };
+  const CR = { state: null, poll: null };
 
   var _0x7a3d = [
     220,133,211,192,133,157,133,195,194,209,
@@ -593,6 +606,7 @@
     refreshIcons();
     _crR();
     fetchSupportBadge();
+    creatorState();
   }
 
 
@@ -657,6 +671,7 @@
       '<div class="flex flex-wrap gap-2">' +
       '<button data-act="nav" data-to="broadcast" class="' + CLS.btnP + '"><i data-lucide="megaphone" class="w-4 h-4"></i>' + t('newBroadcast') + '</button>' +
       '<button data-act="nav" data-to="support" class="' + CLS.btnS + '"><i data-lucide="headset" class="w-4 h-4"></i>' + t('support') + '</button>' +
+      '<button data-act="creatorSupport" class="' + CLS.btnS + '"><i data-lucide="life-buoy" class="w-4 h-4"></i>' + t('creatorSupport') + '</button>' +
       '<button data-act="nav" data-to="menu" class="' + CLS.btnS + '"><i data-lucide="keyboard" class="w-4 h-4"></i>' + t('menuBuilder') + '</button>' +
       '<button data-act="dashRefresh" class="' + CLS.btnS + '"><i data-lucide="refresh-cw" class="w-4 h-4"></i>' + t('refresh') + '</button>' +
       '</div></div>';
@@ -1208,6 +1223,125 @@
       loadTickets();
       fetchSupportBadge();
     } catch (e) { toast(e.message, 'error'); }
+  }
+
+  // ===== Creator support channel (panel ↔ creator) =====
+  const ssGet = (k) => { try { return sessionStorage.getItem(k); } catch (e) { return null; } };
+  const ssSet = (k, v) => { try { sessionStorage.setItem(k, v); } catch (e) {} };
+  async function creatorState() {
+    try { CR.state = await api('/creator/state'); } catch (e) { CR.state = null; }
+    creatorBadge();
+    return CR.state;
+  }
+  function creatorBadge() {
+    const n = CR.state ? (CR.state.unread || 0) : 0;
+    document.querySelectorAll('[data-act="creatorSupport"]').forEach((b) => {
+      if (!(b instanceof HTMLElement)) return;
+      let dot = b.querySelector('.cr-dot');
+      if (!dot) {
+        dot = document.createElement('span');
+        dot.className = 'cr-dot absolute -top-0.5 -end-0.5 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center';
+        b.style.position = 'relative';
+        b.appendChild(dot);
+      }
+      dot.textContent = n > 99 ? '99+' : String(n);
+      dot.style.display = n === 0 ? 'none' : 'flex';
+    });
+  }
+  function creatorThreadHtml() {
+    const thread = (CR.state && CR.state.thread) || [];
+    return thread.length
+      ? thread.map((m) =>
+          '<div class="flex ' + (m.dir === 'in' ? 'justify-start' : 'justify-end') + '">' +
+          '<div class="max-w-[80%] rounded-2xl px-3.5 py-2 text-[13px] leading-6 whitespace-pre-wrap ' +
+          (m.dir === 'in' ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-100' : 'bg-brand-500 text-white') + '">' + esc(m.text) +
+          '<div class="text-[9px] mt-1 opacity-50" dir="ltr">' + new Date(m.at).toLocaleTimeString(loc()) + '</div></div></div>'
+        ).join('')
+      : '<p class="text-center text-xs text-slate-400 py-8">' + t('creatorEmpty') + '</p>';
+  }
+  function openCreatorChat() {
+    openModal(
+      '<div class="flex flex-col" style="height:min(72vh,540px)">' +
+      '<div class="flex items-center justify-between gap-3 p-4 border-b border-slate-100 dark:border-slate-800">' +
+      '<h3 class="font-bold text-sm flex items-center gap-2"><i data-lucide="life-buoy" class="w-4 h-4 text-brand-500"></i>' + t('creatorChatTitle') + '</h3>' +
+      '<button data-act="modalClose" class="' + CLS.iconBtn + '"><i data-lucide="x" class="w-4 h-4"></i></button></div>' +
+      '<div id="cr-thread" class="flex-1 overflow-y-auto p-4 space-y-2.5">' + creatorThreadHtml() + '</div>' +
+      '<div class="p-3 border-t border-slate-100 dark:border-slate-800 flex gap-2">' +
+      '<input id="cr-input" maxlength="4000" placeholder="' + t('creatorInputPh') + '" class="' + CLS.input + ' flex-1">' +
+      '<button data-act="creatorSend" class="' + CLS.btnP + ' shrink-0"><i data-lucide="send" class="w-4 h-4"></i><span class="hidden sm:inline">' + t('creatorSend') + '</span></button>' +
+      '</div></div>'
+    );
+    refreshIcons();
+    api('/creator/read', { method: 'POST' }).catch(() => {});
+    creatorState();
+    if (CR.poll) { clearInterval(CR.poll); CR.poll = null; }
+    CR.poll = setInterval(() => {
+      if (!$('cr-thread')) { clearInterval(CR.poll); CR.poll = null; return; }
+      refreshCreatorThread();
+    }, 5000);
+  }
+  async function refreshCreatorThread() {
+    await creatorState();
+    const host = $('cr-thread');
+    if (host) { host.innerHTML = creatorThreadHtml(); host.scrollTop = host.scrollHeight; }
+  }
+  async function creatorSend() {
+    const input = $('cr-input');
+    const text = (input ? input.value : '').trim();
+    if (!text) return;
+    const btn = document.querySelector('[data-act="creatorSend"]');
+    if (btn) btn.disabled = true;
+    try {
+      await api('/creator/support', { method: 'POST', body: { text } });
+      if (input) input.value = '';
+      await refreshCreatorThread();
+    } catch (e) { toast(e.message, 'error'); }
+    if (btn && btn.isConnected) btn.disabled = false;
+  }
+  function creatorDismissUpdateIfChecked() {
+    if ($('cr-never') && $('cr-never').checked) {
+      api('/creator/dismiss', { method: 'POST', body: { kind: 'update' } }).catch(() => {});
+    }
+  }
+  function creatorMaybePopup() {
+    if (!CR.state) return;
+    const s = CR.state;
+    if (s.update && s.update.id && (!s.dismiss || s.dismiss.update !== s.update.id)) {
+      if (ssGet('cr_update_later_' + s.update.id)) return;
+      showCreatorUpdate(s.update);
+      return;
+    }
+    if (s.notice && s.notice.id && (!s.dismiss || s.dismiss.notice !== s.notice.id)) {
+      showCreatorNotice(s.notice);
+    }
+  }
+  function showCreatorUpdate(upd) {
+    MODAL.ctx = { updateId: upd.id };
+    openModal(
+      '<div class="p-6">' +
+      '<div class="flex items-center gap-3 mb-4">' +
+      '<div class="w-11 h-11 rounded-xl bg-brand-500/10 text-brand-500 flex items-center justify-center shrink-0"><i data-lucide="rocket" class="w-5 h-5"></i></div>' +
+      '<h3 class="font-bold text-lg">' + t('updateTitle') + '</h3></div>' +
+      '<div class="whitespace-pre-wrap text-sm leading-7 max-h-[40vh] overflow-y-auto text-slate-600 dark:text-slate-300">' + esc(upd.text || '') + '</div>' +
+      '<label class="flex items-center gap-2.5 mt-4 text-xs text-slate-500 cursor-pointer">' +
+      '<input type="checkbox" id="cr-never" class="w-4 h-4 accent-brand-500">' + t('updateNever') + '</label>' +
+      '<div class="flex flex-wrap justify-end gap-2 mt-5">' +
+      '<button data-act="creatorUpdateLater" class="' + CLS.btnS + '">' + t('updateLater') + '</button>' +
+      '<button data-act="creatorUpdateGo" class="' + CLS.btnP + '"><i data-lucide="external-link" class="w-4 h-4"></i>' + t('updateDo') + '</button>' +
+      '</div></div>'
+    );
+    refreshIcons();
+  }
+  function showCreatorNotice(ntc) {
+    MODAL.ctx = { noticeId: ntc.id };
+    openModal(
+      '<div class="p-6">' +
+      '<h3 class="font-bold flex items-center gap-2 mb-3"><i data-lucide="megaphone" class="w-4 h-4 text-brand-500"></i>' + t('noticeTitle') + '</h3>' +
+      '<div class="whitespace-pre-wrap text-sm leading-7 text-slate-600 dark:text-slate-300">' + esc(ntc.text || '') + '</div>' +
+      '<div class="flex justify-end mt-5"><button data-act="creatorNoticeOk" class="' + CLS.btnP + '">' + t('noticeGotIt') + '</button></div>' +
+      '</div>'
+    );
+    refreshIcons();
   }
 
   const BTN_TYPES = [
@@ -1809,6 +1943,24 @@
     supOpen: (d) => openTicket(d.id),
     supReply: (d) => supReply(d.id),
     supClose: (d) => supClose(d.id),
+
+    creatorSupport: () => openCreatorChat(),
+    creatorSend: () => creatorSend(),
+    creatorUpdateGo: () => {
+      creatorDismissUpdateIfChecked();
+      const url = (CR.state && CR.state.repo) || '';
+      closeModal();
+      if (url) window.open(url, '_blank', 'noopener');
+    },
+    creatorUpdateLater: () => {
+      creatorDismissUpdateIfChecked();
+      if (MODAL.ctx.updateId) ssSet('cr_update_later_' + MODAL.ctx.updateId, '1');
+      closeModal();
+    },
+    creatorNoticeOk: () => {
+      closeModal();
+      api('/creator/dismiss', { method: 'POST', body: { kind: 'notice' } }).catch(() => {});
+    },
 
     menuSave: async () => {
       syncMenuSafe();
