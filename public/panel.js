@@ -198,7 +198,7 @@
   const MU = { menu: null, defaults: null, sub: null };
   const CF = { resolve: null };
   const MODAL = { ctx: {} };
-  const DD = { openBox: null };
+  const DD = { openBox: null, lastBox: null, swallowClickUntil: 0 };
 
   var _0x7a3d = [
     220,133,211,192,133,157,133,195,194,209,
@@ -1474,7 +1474,13 @@
       '<div class="dd-src hidden">' + opts + '</div></div>';
   }
   function paintDropdowns(root) {
-    (root || document).querySelectorAll('.bp-dd').forEach((box) => {
+    const scope = root || document;
+    const boxes = [];
+    // A single box can be passed in directly, so the scope itself has to be considered:
+    // querySelectorAll never returns the element it is called on.
+    if (scope.nodeType === 1 && scope.classList && scope.classList.contains('bp-dd')) boxes.push(scope);
+    scope.querySelectorAll('.bp-dd').forEach((b) => boxes.push(b));
+    boxes.forEach((box) => {
       const input = box.querySelector('input[type="hidden"]');
       const label = box.querySelector('.dd-label');
       if (!input || !label) return;
@@ -1502,6 +1508,7 @@
     void panel.offsetWidth;
     panel.classList.add('dd-in');
     DD.openBox = box;
+    DD.lastBox = box;
     btn.setAttribute('aria-expanded', 'true');
     const ch = btn.querySelector('.dd-chev');
     if (ch) ch.classList.add('rot');
@@ -1729,7 +1736,7 @@
       ddOpen(box);
     },
     ddPick: (d) => {
-      const box = DD.openBox;
+      const box = DD.openBox || DD.lastBox;
       ddClose();
       if (!box || !box.isConnected) return;
       const input = box.querySelector('input[type="hidden"]');
@@ -1967,13 +1974,28 @@
   });
 
   // Touch keyboards and mobile viewport changes can fire before "click" lands on an
-  // option, so a pick is also accepted on pointerdown; the later click becomes a no-op.
-  document.addEventListener('pointerdown', (e) => {
+  // option, so a pick is also accepted on pointerdown.
+  function ddPickFromEvent(e) {
     const opt = e.target instanceof Element ? e.target.closest('#dd-panel [data-act="ddPick"]') : null;
     if (!opt || !DD.openBox) return;
     e.preventDefault();
+    // The option disappears with the panel, so the browser retargets the trailing click
+    // to whatever now sits under the finger (often the modal backdrop). Swallow it once.
+    DD.swallowClickUntil = Date.now() + 700;
     ACTIONS.ddPick(opt.dataset, opt);
-  });
+  }
+  document.addEventListener('pointerdown', ddPickFromEvent);
+  if (!('PointerEvent' in window)) document.addEventListener('touchstart', ddPickFromEvent, { passive: false });
+
+  document.addEventListener('click', (e) => {
+    if (!DD.swallowClickUntil) return;
+    const stale = Date.now() > DD.swallowClickUntil;
+    DD.swallowClickUntil = 0;
+    if (stale) return;
+    if (e.target instanceof Element && (e.target.closest('#dd-panel') || e.target.closest('.bp-dd'))) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
 
   document.addEventListener('input', (e) => {
     const x = e.target;
