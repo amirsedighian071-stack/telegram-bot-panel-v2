@@ -185,6 +185,7 @@
     timers: [],
     live: { state: 'unknown', ms: null, colo: null, at: null },
     saveBar: 'idle',
+    savingAll: false,
   };
   const ROUTES = ['dashboard', 'studio', 'users', 'broadcast', 'support', 'menu', 'settings'];
   const NAV = [
@@ -351,7 +352,18 @@
     return d.data;
   }
 
+  let _lastToast = null;
   function toast(msg, type = 'info') {
+    // Save-all runs every section action back-to-back; their individual success
+    // notices must not stack. Only the single "all saved" message remains.
+    if (S.savingAll && type === 'success') return;
+    const now = Date.now();
+    // Identical back-to-back toasts (double taps, retried saves) collapse into one.
+    if (_lastToast && _lastToast.msg === msg && _lastToast.type === type && now - _lastToast.at < 1500) {
+      _lastToast.at = now;
+      return;
+    }
+    _lastToast = { msg, type, at: now };
     const map = { success: ['check-circle-2', 'text-emerald-500'], error: ['alert-circle', 'text-rose-500'], info: ['info', 'text-sky-500'] };
     const [icon, color] = map[type] || map.info;
     const el = document.createElement('div');
@@ -1981,6 +1993,15 @@
     clearTimeout(saveBarSaved.timer);
     saveBarSaved.timer = setTimeout(() => { S.saveBar = 'idle'; updateSaveBar(); }, 4000);
   }
+  // A single-section save reports its own toast; the bar resets silently so no
+  // second "all saved" message appears.
+  function saveBarReset() {
+    if (!saveAllActions().length) return;
+    S.saveBar = 'idle';
+    clearTimeout(saveBarSaved.timer);
+    const m = $('save-bar-msg');
+    if (m) m.textContent = '';
+  }
   ACTIONS.saveAll = async () => {
     const acts = saveAllActions();
     if (!acts.length) return;
@@ -1988,13 +2009,17 @@
     if (btn) btn.disabled = true;
     const m = $('save-bar-msg');
     if (m) m.textContent = t('savingAll');
+    S.savingAll = true;
     try {
       for (const a of acts) await ACTIONS[a]({}, null);
       saveBarSaved();
     } catch (e) {
       if (m) m.textContent = t('unsavedHint');
       toast(typeof vError === 'function' ? vError(e.message) : e.message, 'error');
-    } finally { if (btn && btn.isConnected) btn.disabled = false; }
+    } finally {
+      S.savingAll = false;
+      if (btn && btn.isConnected) btn.disabled = false;
+    }
   };
   // Any edit inside the route view marks the bar as dirty (dropdown picks included:
   // ddPick dispatches input/change on the hidden input of the box).
@@ -2035,12 +2060,24 @@
     if (!e.target.closest('.bp-dd') && !e.target.closest('#dd-panel')) ddClose();
     const el = e.target.closest('[data-act]');
     if (!el) return;
-    const fn = ACTIONS[el.getAttribute('data-act')];
-    if (fn && !el.disabled) {
+    const act = el.getAttribute('data-act');
+    const fn = ACTIONS[act];
+    if (fn && !el.disabled && !el.dataset.busy) {
       e.preventDefault();
-      Promise.resolve(fn(el.dataset, el))
-        .then(() => { if (SAVE_ACT_RE.test(el.getAttribute('data-act') || '')) saveBarSaved(); })
-        .catch(err => toast(typeof vError === 'function' ? vError(err.message) : err.message, 'error'));
+      let ret;
+      try { ret = fn(el.dataset, el); } catch (err) { toast(typeof vError === 'function' ? vError(err.message) : err.message, 'error'); return; }
+      if (ret && typeof ret.then === 'function') {
+        // Async action: hold a busy lock on the button so a double-tap cannot
+        // run it twice; the lock releases only after the promise settles.
+        el.dataset.busy = '1';
+        el.disabled = true;
+        Promise.resolve(ret)
+          .then(() => { if (act !== 'saveAll' && SAVE_ACT_RE.test(act)) saveBarReset(); })
+          .catch(err => toast(typeof vError === 'function' ? vError(err.message) : err.message, 'error'))
+          .finally(() => { delete el.dataset.busy; if (el.isConnected) el.disabled = false; });
+      } else if (act !== 'saveAll' && SAVE_ACT_RE.test(act)) {
+        saveBarReset();
+      }
     }
   });
 
