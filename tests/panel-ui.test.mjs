@@ -68,9 +68,10 @@ test("a touch pick survives the retargeted click that follows it", () => {
   const option = [...ddPanel.querySelectorAll(".dd-opt")].find(
     (o) => o.dataset.v === "3xui",
   );
-  // Mobile browsers fire pointerdown first; the option is gone by the time the
-  // click is delivered, so the click lands on the modal backdrop underneath.
+  // A tap is a pointerdown followed by a pointerup on the same option; the pick
+  // commits on pointerup so the list keeps native touch scrolling.
   option.dispatchEvent(new win.Event("pointerdown", { bubbles: true }));
+  option.dispatchEvent(new win.Event("pointerup", { bubbles: true }));
   assert.equal(input.value, "3xui");
   assert.equal(label.textContent, "3x-ui");
 
@@ -86,6 +87,38 @@ test("a touch pick survives the retargeted click that follows it", () => {
   // A deliberate later click on the backdrop still closes the dialog.
   backdrop.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
   assert.equal(doc.getElementById("modal-wrap").classList.contains("hidden"), true);
+});
+
+test("dragging the open list (scroll gesture) does not pick an option", () => {
+  const { input, toggle, ddPanel } = openSelect();
+  const { win } = panel;
+
+  toggle.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+  const option = [...ddPanel.querySelectorAll(".dd-opt")].find(
+    (o) => o.dataset.v === "marzban",
+  );
+  const pe = (type, x, y) =>
+    Object.assign(new win.Event(type, { bubbles: true }), {
+      pointerId: 1,
+      clientX: x,
+      clientY: y,
+    });
+  // The finger moves far more than the 12px threshold: a scroll, not a tap.
+  option.dispatchEvent(pe("pointerdown", 0, 0));
+  option.dispatchEvent(pe("pointermove", 0, -40));
+  option.dispatchEvent(pe("pointerup", 0, -40));
+  assert.equal(input.value, "stock", "a scroll gesture must not select");
+  assert.equal(
+    ddPanel.classList.contains("hidden"),
+    false,
+    "the list stays open after scrolling",
+  );
+
+  // A small (≤12px) drift is still a tap and selects.
+  option.dispatchEvent(pe("pointerdown", 0, 0));
+  option.dispatchEvent(pe("pointermove", 3, -8));
+  option.dispatchEvent(pe("pointerup", 3, -8));
+  assert.equal(input.value, "marzban", "a tap with ≤12px drift selects");
 });
 
 test("dropdowns outside dialogs (service tabs) select too, and repainting a single box works", () => {
@@ -132,4 +165,164 @@ test("panel sections open and close as accordions and remember their state", () 
 
   tap(head);
   assert.equal(section.classList.contains("open"), false, "clicking again collapses it");
+});
+
+test("section action buttons render inside the accordion body, not the header", () => {
+  panel = bootPanel();
+  const { doc, inject } = panel;
+  inject(`
+    document.body.insertAdjacentHTML('beforeend', '<div id="test-host"></div>');
+    document.getElementById('test-host').innerHTML =
+      vSection('Providers', '<p id="sec-content">body</p>', vButton('ذخیره', 'vSaveMotion', '', true), { group: 'v', id: 'panels', open: true });
+  `);
+  const section = doc.querySelector("section.bp-sec");
+  const head = section.querySelector("div.flex.items-center");
+  const body = section.querySelector(".bp-sec-inner");
+  assert.equal(head.querySelector("[data-act='vSaveMotion']"), null, "the header must stay a plain toggle");
+  const btn = body.querySelector("[data-act='vSaveMotion']");
+  assert.notEqual(btn, null, "action buttons live in the body");
+  assert.ok(
+    btn.closest(".sec-actions"),
+    "buttons sit in a dedicated action row",
+  );
+  assert.ok(
+    btn.className.includes("bg-brand-500"),
+    "a primary (blue) button class is applied",
+  );
+});
+
+test("the save-bar appears on routes with saveable sections and saves them all", async () => {
+  panel = bootPanel();
+  const { doc, win, inject, tap } = panel;
+  inject(`render();`);
+  await new Promise((r) => setTimeout(r, 10));
+  const bar = doc.getElementById("save-bar");
+  assert.notEqual(bar, null, "the save-bar element exists");
+
+  inject(`renderSettings(); updateSaveBar();`);
+  const label = doc.getElementById("save-bar-btn-label");
+  assert.equal(bar.classList.contains("hidden"), false, "visible on the settings route");
+  assert.equal(label.textContent, "ذخیره همه تغییرات");
+  assert.equal(
+    doc.querySelectorAll('#view [data-act="saveGeneral"], #view [data-act="saveChannel"], #view [data-act="saveTuning"]').length >= 3,
+    true,
+    "settings route exposes its section save buttons",
+  );
+
+  // An edit inside the view marks the bar as dirty.
+  doc.getElementById("st-sb-fa").dispatchEvent(new win.Event("input", { bubbles: true }));
+  assert.equal(
+    doc.getElementById("save-bar-msg").textContent,
+    "تغییرات ذخیره‌نشده دارید",
+  );
+
+  // Save-all runs every section action and reports success.
+  let puts = 0;
+  inject(`
+    window.__savedActions = [];
+    ACTIONS.saveGeneral = async () => { window.__savedActions.push('saveGeneral'); };
+    ACTIONS.saveChannel = async () => { window.__savedActions.push('saveChannel'); };
+    ACTIONS.saveTuning = async () => { window.__savedActions.push('saveTuning'); };
+  `);
+  tap(doc.getElementById("save-bar-btn"), { pointer: false });
+  await new Promise((r) => setTimeout(r, 20));
+  const saved = Array.from(win.__savedActions || []);
+  assert.deepEqual(saved, ["saveGeneral", "saveChannel", "saveTuning"]);
+  assert.equal(
+    doc.getElementById("save-bar-msg").textContent,
+    "تمامی تغییرات ذخیره شدند",
+  );
+});
+
+test("the save-bar stays hidden when the route has no save buttons", async () => {
+  panel = bootPanel();
+  const { doc, inject } = panel;
+  inject(`render();`);
+  await new Promise((r) => setTimeout(r, 10));
+  const bar = doc.getElementById("save-bar");
+  // Dashboard route has no data-act save buttons in #view.
+  assert.equal(bar.classList.contains("hidden"), true);
+});
+
+test("data-pf shows only the fields relevant to the chosen panel type", () => {
+  panel = bootPanel();
+  const { doc, inject } = panel;
+  inject(`
+    document.body.insertAdjacentHTML('beforeend', '<div id="pf-host"></div>');
+    const host = document.getElementById('pf-host');
+    host.innerHTML =
+      '<div data-pf="pf-url" id="f-url"></div>' +
+      '<div data-pf="pf-login" id="f-login"></div>' +
+      '<div data-pf="pf-token" id="f-token"></div>' +
+      '<div data-pf="pf-inbound" id="f-inbound"></div>' +
+      '<div data-pf="pf-shelf" id="f-shelf"></div>' +
+      '<div data-pf="pf-profile" id="f-profile"></div>';
+    svApplyPf(host, 'stock');
+  `);
+  const vis = (id) => !doc.getElementById(id).classList.contains("hidden");
+  assert.equal(vis("f-shelf"), true, "stock shows the shelf picker");
+  assert.equal(vis("f-url"), false, "stock hides the panel URL");
+  assert.equal(vis("f-login"), false);
+  assert.equal(vis("f-token"), false);
+
+  inject(`svApplyPf(document.getElementById('pf-host'), 'sui');`);
+  assert.equal(vis("f-url"), true, "S-UI shows the URL");
+  assert.equal(vis("f-token"), true, "S-UI uses an API token");
+  assert.equal(vis("f-login"), false, "S-UI has no username/password");
+  assert.equal(vis("f-inbound"), false);
+  assert.equal(vis("f-shelf"), false);
+  assert.equal(vis("f-profile"), false);
+
+  inject(`svApplyPf(document.getElementById('pf-host'), 'xui');`);
+  assert.equal(vis("f-login"), true, "x-ui logs in with username/password");
+  assert.equal(vis("f-inbound"), true, "x-ui needs the inbound id");
+  assert.equal(vis("f-token"), false);
+
+  inject(`svApplyPf(document.getElementById('pf-host'), 'wgdashboard');`);
+  assert.equal(vis("f-token"), true);
+  assert.equal(vis("f-inbound"), false);
+  assert.equal(vis("f-profile"), false);
+});
+
+test("data-pf filters gateway fields by gateway type", () => {
+  panel = bootPanel();
+  const { doc, inject } = panel;
+  inject(`
+    document.body.insertAdjacentHTML('beforeend', '<div id="gw-host"></div>');
+    const host = document.getElementById('gw-host');
+    host.innerHTML =
+      '<div data-pf="gw-merchant" id="g-merchant"></div>' +
+      '<div data-pf="gw-apikey" id="g-api"></div>' +
+      '<div data-pf="gw-ipn" id="g-ipn"></div>' +
+      '<div data-pf="gw-card" id="g-card"></div>' +
+      '<div data-pf="gw-sandbox" id="g-sandbox"></div>' +
+      '<div data-pf="gw-address" id="g-address"></div>' +
+      '<div data-pf="gw-confirm" id="g-confirm"></div>' +
+      '<div data-pf="gw-crypto-block" id="g-block"></div>';
+    svApplyPf(host, 'manual');
+  `);
+  const vis = (id) => !doc.getElementById(id).classList.contains("hidden");
+  assert.equal(vis("g-card"), true, "bank transfer shows card fields");
+  assert.equal(vis("g-merchant"), false);
+  assert.equal(vis("g-api"), false);
+
+  inject(`svApplyPf(document.getElementById('gw-host'), 'zarinpal');`);
+  assert.equal(vis("g-merchant"), true);
+  assert.equal(vis("g-sandbox"), true);
+  assert.equal(vis("g-card"), false);
+
+  inject(`svApplyPf(document.getElementById('gw-host'), 'nowpayments');`);
+  assert.equal(vis("g-api"), true);
+  assert.equal(vis("g-ipn"), true);
+  assert.equal(vis("g-merchant"), false);
+
+  inject(`svApplyPf(document.getElementById('gw-host'), 'crypto');`);
+  assert.equal(vis("g-block"), true);
+  assert.equal(vis("g-address"), true);
+  assert.equal(vis("g-confirm"), true);
+  assert.equal(vis("g-api"), false);
+
+  inject(`svApplyPf(document.getElementById('gw-host'), 'stars');`);
+  for (const id of ["g-merchant", "g-api", "g-ipn", "g-card", "g-address", "g-block"])
+    assert.equal(vis(id), false, "stars needs no credentials: " + id);
 });
