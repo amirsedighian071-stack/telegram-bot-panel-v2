@@ -1724,6 +1724,9 @@
       '<p id="st-token-cur" class="text-xs mb-2 break-all"></p>' +
       '<input id="st-token-in" dir="ltr" type="password" autocomplete="off" placeholder="123456:ABC-DEF…" class="' + CLS.input + '">' +
       '<p class="text-[11px] text-slate-400 mt-1.5">' + t('tokenHint') + '</p></div>' +
+      '<div class="mb-4"><label class="' + CLS.label + '">' + (S.lang === 'en' ? 'Admin Numeric Telegram ID (for Mini App)' : 'آیدی عددی ادمین (برای ورود بدون رمز مینی‌اپ)') + '</label>' +
+      '<input id="st-admin-id" dir="ltr" placeholder="123456789" class="' + CLS.input + '">' +
+      '<p class="text-[11px] text-slate-400 mt-1.5">' + (S.lang === 'en' ? 'Your numeric Telegram ID (send /id to bot). Allows instant admin login when opened inside Telegram Mini App.' : 'شناسه عددی اکانت تلگرام شما (با ارسال /id به ربات دریافت کنید). با تنظیم این آیدی، مینی‌اپ داخل تلگرام بدون نیاز به رمز ورود باز می‌شود.') + '</p></div>' +
 '<div class="mb-4"><label class="' + CLS.label + '">' + t('botLang') + '</label>' +
       ddHtml({ id: 'st-langmode', current: 'both', options: [['both', t('langBoth')], ['fa', t('langFaOnly')], ['en', t('langEnOnly')]] }) + '</div>' +
       '<div class="mb-4" id="deflang-wrap"><label class="' + CLS.label + '">' + t('defaultBotLang') + '</label>' +
@@ -1799,6 +1802,7 @@
         ? '<span class="text-emerald-500 font-semibold">✓ ' + t('tokenStored') + '</span> <span class="font-mono text-slate-400" dir="ltr">' + esc(st.tokenMasked) + '</span>'
         : '<span class="text-amber-500 font-semibold">⚠ ' + t('tokenMissingWarn') + '</span>';
       $('st-langmode').value = st.botLangMode || 'both';
+      if ($('st-admin-id')) $('st-admin-id').value = st.adminId || '';
       $('st-lang').value = st.defaultLang || 'fa';
       const dw = $('deflang-wrap');
       if (dw) dw.classList.toggle('hidden', (st.botLangMode || 'both') !== 'both');
@@ -2046,6 +2050,7 @@
       const body = {
         defaultLang: $('st-lang').value,
         botLangMode: $('st-langmode').value,
+        adminId: $('st-admin-id') ? $('st-admin-id').value.trim() : '',
         supportButton: { enabled: $('st-sb-on').checked, fa: $('st-sb-fa').value.trim(), en: $('st-sb-en').value.trim() },
       };
       const tk = $('st-token-in').value.trim();

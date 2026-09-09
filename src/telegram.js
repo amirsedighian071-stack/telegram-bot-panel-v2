@@ -4,7 +4,7 @@ import { starsPreCheckout, starsSuccessful } from './services/payments.js';
 import {
   getMenu, getSettings, getUser, putUser, bumpStats, pushRecentUser,
   getPoll, putPoll, pollTotals, getPost, putPost,
-  getTicket, ticketAppendUser,
+  getTicket, ticketAppendUser, getStats,
 } from './kv.js';
 import { getJson, putJson } from './kv.js';
 import { tgApi, resolveToken, sendToUser, beginMessageEdit, endMessageEdit } from './bot-api.js';
@@ -12,11 +12,13 @@ export { tgApi, resolveToken, sendToUser } from './bot-api.js';
 import { membershipGate, sendMembershipLock, joinUrl } from './gate.js';
 import { PURPOSES, enabled, text as tr, assert } from './config.js';
 import { entityKey, allEntities } from './storage.js';
-import { commerceMessage, commerceCallback, catalog, showProduct, showCart, myOrders, checkoutError, resumeMemberDeliveries } from './commerce.js';
+import { commerceMessage, commerceCallback, catalog, showProduct, showCart, myOrders, checkoutError, resumeMemberDeliveries, searchProducts } from './commerce.js';
 import { completeSignup, showPoints, progress } from './crm.js';
-import { moderateMessage, groupMemberUpdate, captchaCallback } from './groups.js';
+import { moderateMessage, groupMemberUpdate, captchaCallback, raffleCallback } from './groups.js';
 import { channelPost, relayMessage } from './automation.js';
 import { engagementCallback } from './engagement.js';
+import { ratesHome, ratesCallback } from './rates.js';
+import { newsHome, newsCallback } from './news.js';
 export { renderPollText, pollKeyboard, sendPollToChat, reactMarkup } from './engagement.js';
 
 const BOT_T = {
@@ -107,6 +109,7 @@ export function renderTpl(text = '', user = {}) {
 export function pageMarkup(rows, { withBack = false, T = BOT_T.fa } = {}) {
   const kb = rows.map((row) =>
     row.map((b) => {
+      if (b.type === 'web_app' || b.web_app) return { text: b.text, web_app: b.web_app || { url: b.value } };
       if (b.type === 'url') return { text: b.text, url: b.value };
       if (b.type === 'text') return { text: b.text, callback_data: `txt:${b._src || 'root'}:${b._r}:${b._c}` };
       if (b.type === 'submenu') return { text: b.text, callback_data: `sub:${b.value}` };
@@ -121,9 +124,13 @@ function tagButtons(rows, src) {
   return rows.map((row, r) => row.map((b, c) => ({ ...b, _src: src, _r: r, _c: c })));
 }
 
-export function inlineMarkup(menu, settings, lang) {
+export function inlineMarkup(menu, settings, lang, user = null) {
   const custom = settings.botPurpose === 'custom' || menu.customized;
-  const rows = withSupport([...(custom && enabled(settings, 'menu') ? menu.inlineButtons : []), ...systemRows(settings, lang || 'fa')], settings, lang || 'fa');
+  const adminRows = [];
+  if (user && settings.adminId && String(user.id) === String(settings.adminId) && settings.publicBaseUrl) {
+    adminRows.push([{ text: '🛠 ' + tr('پنل مدیریت (مینی‌اپ)', 'Admin Mini App', lang || 'fa'), type: 'web_app', web_app: { url: settings.publicBaseUrl } }]);
+  }
+  const rows = withSupport([...adminRows, ...(custom && enabled(settings, 'menu') ? menu.inlineButtons : []), ...systemRows(settings, lang || 'fa')], settings, lang || 'fa');
   return pageMarkup(tagButtons(rows, 'root'), { withBack: false });
 }
 
@@ -171,20 +178,32 @@ function systemRows(settings, lang) {
   if (enabled(settings, 'services')) rows.push([cb(tr('📡 خرید و مدیریت سرویس', '📡 VPN services', lang), 'vpn:home'), cb(tr('🌐 مینی‌اپ مشتری', '🌐 Customer portal', lang), 'vpn:portal')]);
   if (enabled(settings, 'catalog')) rows.push([cb(tr('📚 محصولات و دسته‌بندی‌ها', '📚 Catalog & categories', lang), 'cat:all:0')]);
   if (enabled(settings, 'shop')) rows.push([cb(tr('🛒 سبد خرید', '🛒 Cart', lang), 'cart:show'), cb(tr('📦 سفارش‌های من', '📦 My orders', lang), 'orders:mine')]);
+  if (settings.botPurpose === 'rates' || settings.botPurpose === 'custom') rows.push([cb(tr('📈 قیمت طلا، دلار و تتر', '📈 Gold, USD & Rates', lang), 'rates:home')]);
+  if (settings.botPurpose === 'news' || settings.botPurpose === 'custom') rows.push([cb(tr('📰 اخبار مهم کشور ایران', '📰 Iran News', lang), 'news:home')]);
   if (enabled(settings, 'learning')) rows.push([cb(tr('🎓 پیشرفت من', '🎓 My progress', lang), 'learn:progress')]);
   if (enabled(settings, 'faq')) rows.push([cb(tr('💡 پرسش‌های متداول', '💡 Frequently asked questions', lang), 'faq:list')]);
   if (enabled(settings, 'crm') && settings.loyalty.enabled) rows.push([cb(tr('⭐ امتیاز و دعوت دوستان', '⭐ Points & referrals', lang), 'crm:points')]);
   if (settings.botLangMode === 'both') rows.push([cb('🌍 فارسی / English', 'setlang:menu')]);
   return rows;
 }
+
 export async function sendStart(token, chatId, user, menu, lang, settings) {
   const purpose = PURPOSES[settings.botPurpose] || PURPOSES.custom;
   let welcome = settings.botPurpose === 'custom' || menu.customized ? renderTpl(menu.welcome[lang] || menu.welcome.fa, user) : `${tr('سلام', 'Hello', lang)} ${user.firstName || ''} 👋\n${lang === 'en' ? purpose.en : purpose.fa}\n${tr('از گزینه‌های زیر استفاده کنید.', 'Choose an option below.', lang)}`;
   if (settings.botPurpose === 'relay') welcome += '\n\n' + tr('پیام یا فایل خود را بفرستید تا طبق تنظیم مدیر، بدون برچسب فوروارد کپی شود. هویت فرستنده نزد مدیر قابل مشاهده است.', 'Send a message or file to copy it without forward attribution, as configured by the administrator. The administrator can see the sender’s identity.', lang);
   if (settings.botPurpose === 'group') welcome += '\n\n' + tr('ربات را ادمین گروه کنید و گروه را در پنل ثبت و فعال کنید. /id شناسه شما را نشان می‌دهد.', 'Add the bot as a group administrator, then register and enable the group in the panel. /id shows your ID.', lang);
-  return sendToUser(token, chatId, welcome, { reply_markup: inlineMarkup(menu, settings, lang), disable_web_page_preview: true });
+  return sendToUser(token, chatId, welcome, { reply_markup: inlineMarkup(menu, settings, lang, user), disable_web_page_preview: true });
 }
-function langKeyboard() { return { inline_keyboard: [[{ text: 'فارسی 🇮🇷', callback_data: 'setlang:fa' }, { text: 'English 🇬🇧', callback_data: 'setlang:en' }]] }; }
+
+function langKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: 'فارسی 🇮🇷', callback_data: 'setlang:fa' }, { text: 'English 🇬🇧', callback_data: 'setlang:en' }],
+      [{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'sub:root' }],
+    ],
+  };
+}
+
 async function deepStart(env, token, user, settings, lang, param) {
   if (param === 'svc_phone' && enabled(settings, 'services')) { await serviceCallback(env, user, lang, 'vpn:phone'); return true; }
   if (param === 'svc_portal' && enabled(settings, 'services')) { await serviceCallback(env, user, lang, 'vpn:portal'); return true; }
@@ -196,11 +215,26 @@ async function deepStart(env, token, user, settings, lang, param) {
   }
   return false;
 }
+
 async function faqList(env, token, user, lang, fid) {
-  if (fid && fid !== 'list') { const f = await getJson(env, entityKey('faq', fid)); if (f && !f.hidden) return sendToUser(token, user.id, ((lang === 'en' && f.answerEn) || f.answer), { reply_markup: { inline_keyboard: [[{ text: tr('⬅️ بازگشت', '⬅️ Back', lang), callback_data: 'faq:list' }]] } }); }
+  if (fid && fid !== 'list') {
+    const f = await getJson(env, entityKey('faq', fid));
+    if (f && !f.hidden) {
+      return sendToUser(token, user.id, ((lang === 'en' && f.answerEn) || f.answer), {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: tr('⬅️ بازگشت به پرسش‌ها', '⬅️ Back to FAQs', lang), callback_data: 'faq:list' }],
+            [{ text: tr('🔙 منوی اصلی', '🔙 Main menu', lang), callback_data: 'sub:root' }],
+          ],
+        },
+      });
+    }
+  }
   const rows = (await allEntities(env, 'faq')).filter(f => !f.hidden).slice(0, 40).map(f => [{ text: ((lang === 'en' && f.questionEn) || f.question).slice(0, 64), callback_data: `faq:${f.id}` }]);
-  return sendToUser(token, user.id, rows.length ? tr('💡 موضوع را انتخاب کنید:', '💡 Choose a topic:', lang) : tr('هنوز پرسشی تعریف نشده است.', 'No FAQ entries yet.', lang), rows.length ? { reply_markup: { inline_keyboard: rows } } : {});
+  rows.push([{ text: tr('🔙 بازگشت به منوی اصلی', '🔙 Back to main menu', lang), callback_data: 'sub:root' }]);
+  return sendToUser(token, user.id, rows.length > 1 ? tr('💡 موضوع را انتخاب کنید:', '💡 Choose a topic:', lang) : tr('هنوز پرسشی تعریف نشده است.', 'No FAQ entries yet.', lang), { reply_markup: { inline_keyboard: rows } });
 }
+
 export async function handleUpdate(env, update) {
   const duplicateKey = Number.isSafeInteger(update.update_id) ? entityKey('update', update.update_id) : null;
   if (duplicateKey && await getJson(env, duplicateKey)) return;
@@ -214,6 +248,7 @@ export async function handleUpdate(env, update) {
   else if (update.callback_query) await onCallback(env, update.callback_query, token, settings);
   if (duplicateKey) await putJson(env, duplicateKey, { at: Date.now() }, { ttl: 7 * 86400 });
 }
+
 async function onMessage(env, msg, token, settings) {
   if (['group', 'supergroup'].includes(msg.chat?.type) || Number(msg.chat?.id) < 0) return moderateMessage(env, token, msg, settings);
   const from = msg.from; if (!from || from.is_bot || msg.edit_date) return;
@@ -244,10 +279,44 @@ async function onMessage(env, msg, token, settings) {
     }
     if (cmd) {
       switch (cmd) {
-        case '/start': { const param = user.pendingStart; user.pendingStart = ''; await putUser(env, user); if (await deepStart(env, token, user, settings, lang, param)) return; if (settings.botPurpose === 'vpn') return serviceHome(env, user, lang); return sendStart(token, chatId, user, menu, lang, settings); }
+        case '/start': {
+          const param = user.pendingStart; user.pendingStart = ''; await putUser(env, user);
+          if (await deepStart(env, token, user, settings, lang, param)) return;
+          if (settings.botPurpose === 'vpn') return serviceHome(env, user, lang);
+          return sendStart(token, chatId, user, menu, lang, settings);
+        }
+        case '/admin':
+        case '/panel': {
+          const isAdminUser = (settings.adminId && String(user.id) === String(settings.adminId)) || (env.ADMIN_ID && String(user.id) === String(env.ADMIN_ID));
+          if (!isAdminUser) return sendToUser(token, chatId, tr('⛔ این بخش فقط برای ادمین ربات در دسترس است.', '⛔ This command is only available to the bot administrator.', lang));
+          const url = settings.publicBaseUrl || env.PUBLIC_BASE_URL || '';
+          const rows = [];
+          if (url) {
+            rows.push([{ text: '🚀 ' + tr('باز کردن پنل مدیریت (مینی‌اپ)', 'Open Admin Mini App', lang), web_app: { url } }]);
+          }
+          rows.push([
+            { text: '📊 ' + tr('آمار ربات', 'Bot Stats', lang), callback_data: 'admin:stats' },
+            { text: '📦 ' + tr('سفارش‌ها', 'Orders', lang), callback_data: 'admin:orders' },
+          ]);
+          rows.push([{ text: '🔙 ' + tr('بازگشت به منوی اصلی', 'Back to main menu', lang), callback_data: 'sub:root' }]);
+          return sendToUser(token, chatId, `🛠 <b>${tr('پنل مدیریت ربات (مینی‌اپ)', 'Bot Control Panel (Mini App)', lang)}</b>\n\n${tr('برای ورود به پنل تحت وب یا مدیریت بخش‌های مختلف، دکمه‌های زیر را انتخاب کنید:', 'Select an option below to manage the bot:', lang)}`, { reply_markup: { inline_keyboard: rows } });
+        }
+        case '/rates':
+        case '/price':
+        case '/gold':
+        case '/dollar':
+        case '/arz':
+          return ratesHome(env, token, user, lang);
+        case '/news':
+        case '/khabar':
+          return newsHome(env, token, user, lang);
+        case '/search': {
+          const q = text.split(/\s+/).slice(1).join(' ').trim();
+          return searchProducts(env, token, user, settings, lang, q);
+        }
         case '/id': return sendToUser(token, chatId, `${T.yourId} ${user.id}`);
         case '/ping': return sendToUser(token, chatId, T.pong);
-        case '/help': return sendToUser(token, chatId, renderTpl(menu.help[lang] || menu.help.fa, user) + '\n\n' + (enabled(settings, 'catalog') ? '/catalog\n' : '') + (enabled(settings, 'shop') ? '/cart · /orders\n' : '') + (enabled(settings, 'crm') ? '/ref · /points\n' : '') + (enabled(settings, 'learning') ? '/progress\n' : '') + '/cancel');
+        case '/help': return sendToUser(token, chatId, renderTpl(menu.help[lang] || menu.help.fa, user) + '\n\n' + (enabled(settings, 'catalog') ? '/catalog · /search\n' : '') + (enabled(settings, 'shop') ? '/cart · /orders\n' : '') + '/rates · /news\n' + (enabled(settings, 'crm') ? '/ref · /points\n' : '') + (enabled(settings, 'learning') ? '/progress\n' : '') + '/cancel');
         case '/lang': return sendToUser(token, chatId, settings.botLangMode === 'both' ? T.chooseLang : T.singleLang, settings.botLangMode === 'both' ? { reply_markup: langKeyboard() } : {});
         case '/support': if (enabled(settings, 'support')) { user.supportOpen = true; user.flow = null; await putUser(env, user); return sendToUser(token, chatId, T.supportIntro); } break;
         case '/catalog': case '/shop': if (enabled(settings, 'catalog')) return catalog(env, token, user, settings, lang); break;
@@ -263,24 +332,26 @@ async function onMessage(env, msg, token, settings) {
   } catch (e) { return sendToUser(token, chatId, (enabled(settings, 'services') && (user.flow?.type?.startsWith('svc_') || /^\/(vpn|wallet|agent|wheel|giftcode|testvpn)/.test(text)) ? serviceError(e.message, lang) : checkoutError(e.message, lang)) + '\n/cancel'); }
   return sendToUser(token, chatId, T.unknown);
 }
+
 async function showPage(token, chatId, messageId, menu, pageId, lang, settings, user) {
   if (pageId === 'root') return sendStart(token, chatId, user, menu, lang, settings);
   const sm = menu.submenus?.[pageId]; if (!sm) return;
   return tgApi(token, 'editMessageText', { chat_id: chatId, message_id: messageId, text: `${sm.title ? sm.title + '\n\n' : ''}${sm.text}`, reply_markup: pageMarkup(tagButtons(withSupport(sm.buttons, settings, lang), pageId), { withBack: true, T: BOT_T[lang] }), disable_web_page_preview: true });
 }
+
 async function onCallback(env, cb, token, settings) {
   const source = cb.message;
-  // A tap refreshes the message it came from. Media captions cannot become text,
-  // and group messages keep their own flow, so both are left untouched.
   const media = !!source && !!(source.photo || source.video || source.document || source.animation || source.audio || source.sticker || source.voice);
   const editable = !!source && !media && Number(source.chat?.id) > 0 && !!source.message_id;
   if (editable) beginMessageEdit(source.chat.id, source.message_id);
   try { return await handleCallback(env, cb, token, settings); }
   finally { if (editable) endMessageEdit(); }
 }
+
 async function handleCallback(env, cb, token, settings) {
   if (!cb.from || cb.from.is_bot) return;
   if (await captchaCallback(env, token, cb, settings)) return;
+  if (await raffleCallback(env, token, cb)) return;
   const { user } = await touchUser(env, cb.from), lang = effectiveLang(user, settings), T = BOT_T[lang];
   const data = String(cb.data || ''), chatId = cb.message?.chat.id, messageId = cb.message?.message_id;
   const answer = (text = '', alert = false) => tgApi(token, 'answerCallbackQuery', { callback_query_id: cb.id, text, show_alert: alert });
@@ -302,6 +373,8 @@ async function handleCallback(env, cb, token, settings) {
   try {
     if (await serviceCallback(env, user, lang, data)) return answer();
     if (await commerceCallback(env, token, user, settings, lang, data)) return answer();
+    if (await ratesCallback(env, token, user, lang, data)) return answer();
+    if (await newsCallback(env, token, user, lang, data)) return answer();
     if (data === 'crm:points' && enabled(settings, 'crm')) { await showPoints(env, token, user, settings, lang); return answer(); }
     if (data.startsWith('learn:') && enabled(settings, 'learning')) {
       if (data === 'learn:progress') await progress(env, token, user, lang);
@@ -314,6 +387,33 @@ async function handleCallback(env, cb, token, settings) {
       if (data === 'setlang:menu') { await sendToUser(token, chatId, T.chooseLang, { reply_markup: langKeyboard() }); return answer(); }
       const l = data.slice(8); if (!['fa', 'en'].includes(l)) return answer();
       user.lang = l; await putUser(env, user); await sendStart(token, chatId, user, menu, l, settings); return answer(BOT_T[l].langSet);
+    }
+    if (data === 'admin:stats') {
+      const isAdminUser = (settings.adminId && String(user.id) === String(settings.adminId)) || (env.ADMIN_ID && String(user.id) === String(env.ADMIN_ID));
+      if (!isAdminUser) return answer(tr('دسترسی غیرمجاز', 'Unauthorized', lang), true);
+      const stats = await getStats(env);
+      const txt = `📊 <b>${tr('آمار کل ربات', 'Bot Stats', lang)}</b>\n\n` +
+        `👥 ${tr('تعداد کاربران', 'Users', lang)}: ${stats.users || 0}\n` +
+        `💬 ${tr('تعداد پیام‌ها', 'Messages', lang)}: ${stats.messages || 0}\n` +
+        `📢 ${tr('ارسال‌های همگانی', 'Broadcasts', lang)}: ${stats.broadcasts || 0}\n` +
+        `🚫 ${tr('کاربران مسدود', 'Banned users', lang)}: ${stats.banned || 0}`;
+      await sendToUser(token, chatId, txt, { reply_markup: { inline_keyboard: [[{ text: '🔙 ' + tr('بازگشت به منوی اصلی', 'Back to main menu', lang), callback_data: 'sub:root' }]] } });
+      return answer();
+    }
+    if (data === 'admin:orders') {
+      const isAdminUser = (settings.adminId && String(user.id) === String(settings.adminId)) || (env.ADMIN_ID && String(user.id) === String(env.ADMIN_ID));
+      if (!isAdminUser) return answer(tr('دسترسی غیرمجاز', 'Unauthorized', lang), true);
+      const orders = (await allEntities(env, 'order')).sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
+      if (!orders.length) {
+        await sendToUser(token, chatId, tr('هنوز سفارشی ثبت نشده است.', 'No orders yet.', lang), { reply_markup: { inline_keyboard: [[{ text: '🔙 ' + tr('بازگشت به منوی اصلی', 'Back to main menu', lang), callback_data: 'sub:root' }]] } });
+        return answer();
+      }
+      let txt = `📦 <b>${tr('آخرین سفارش‌های ثبت‌شده', 'Recent Orders', lang)}</b>\n\n`;
+      for (const o of orders) {
+        txt += `#${o.id} · ${o.userName || o.userId}\n💰 ${o.total} تومان | ${o.status}\n\n`;
+      }
+      await sendToUser(token, chatId, txt, { reply_markup: { inline_keyboard: [[{ text: '🔙 ' + tr('بازگشت به منوی اصلی', 'Back to main menu', lang), callback_data: 'sub:root' }]] } });
+      return answer();
     }
     if (data.startsWith('sub:') && enabled(settings, 'menu')) { await showPage(token, chatId, messageId, menu, data.slice(4), lang, settings, user); return answer(); }
     if (data.startsWith('txt:') && enabled(settings, 'menu')) { const [, src, r, c] = data.split(':'); const rows = src === 'root' ? menu.inlineButtons : menu.submenus?.[src]?.buttons || []; const btn = rows[+r]?.[+c]; return answer(btn?.type === 'text' ? String(btn.value).slice(0, 200) : '…', true); }

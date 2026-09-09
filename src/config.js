@@ -4,21 +4,23 @@ export const PURPOSES = {
   vpn: { fa: 'فروش و مدیریت سرویس VPN', en: 'VPN services & customer portal', icon: 'network', modules: ['services', 'crm', 'broadcast', 'support', 'menu'], desc: 'مینی‌اپ، پنل‌های VPN، کیف پول، نمایندگی و انبار کانفیگ' },
   custom: { fa: 'پیش‌فرض / سفارشی', en: 'Custom workspace', icon: 'sliders-horizontal', modules: MODULES, desc: 'همه ابزارها؛ انتخاب و شخصی‌سازی آزاد' },
   channel: { fa: 'مدیریت کانال', en: 'Channel manager', icon: 'radio', modules: ['catalog', 'channel', 'moderation', 'crm', 'broadcast', 'support', 'menu'], desc: 'انتشار، زمان‌بندی، محصولات، دسته‌بندی و تعامل' },
-  shop: { fa: 'فروشگاه', en: 'Store', icon: 'shopping-bag', modules: ['catalog', 'shop', 'crm', 'broadcast', 'support', 'menu'], desc: 'محصول، سبد خرید، پرداخت، سفارش و تحویل' },
-  group: { fa: 'نگهبان گروه', en: 'Group guardian', icon: 'shield-check', modules: ['moderation', 'broadcast'], desc: 'ضداسپم، کپچا، قوانین، اخطار و حالت شب' },
+  shop: { fa: 'فروشگاه', en: 'Store', icon: 'shopping-bag', modules: ['catalog', 'shop', 'crm', 'broadcast', 'support', 'menu'], desc: 'محصول، سبد خرید، پرداخت، سفارش، رهگیری و تحویل' },
+  group: { fa: 'مدیریت گروه', en: 'Group manager', icon: 'shield-check', modules: ['moderation', 'broadcast'], desc: 'مدیریت پیشرفته گروه، قفل محتوا، خوش‌آمدگویی، ضداسپم، اد اجباری، فیلتر کلمات، اخطار، خاموشی و قرعه‌کشی' },
   relay: { fa: 'حذف فوروارد / بی‌نام‌ساز', en: 'Anonymous relay', icon: 'copy', modules: ['relay', 'support'], desc: 'کپی بدون برچسب فوروارد به مقصدهای مدیر' },
   library: { fa: 'کتابخانه و دانلود', en: 'File library', icon: 'library', modules: ['catalog', 'crm', 'broadcast', 'support', 'menu'], desc: 'فایل‌های دسته‌بندی‌شده با لینک اختصاصی و قفل عضویت' },
   education: { fa: 'آموزش و دوره', en: 'Learning bot', icon: 'graduation-cap', modules: ['catalog', 'shop', 'learning', 'channel', 'broadcast', 'support', 'menu'], desc: 'درس و فایل، دوره پولی یا رایگان و ثبت پیشرفت' },
   support: { fa: 'پشتیبانی مشتریان', en: 'Customer support', icon: 'headset', modules: ['support', 'faq', 'menu'], desc: 'گفتگوی دوطرفه و پاسخ‌های متداول' },
   faq: { fa: 'راهنما و پرسش‌وپاسخ', en: 'FAQ assistant', icon: 'messages-square', modules: ['faq', 'support', 'menu'], desc: 'پاسخ‌های آماده دو زبانه با دکمه شیشه‌ای' },
   contest: { fa: 'مسابقه و باشگاه اعضا', en: 'Community contests', icon: 'trophy', modules: ['crm', 'broadcast', 'channel', 'support', 'menu'], desc: 'کوییز، نظرسنجی، امتیاز و معرفی دوستان' },
-  news: { fa: 'خبرخوان خودکار', en: 'News publisher', icon: 'newspaper', modules: ['channel', 'broadcast', 'menu'], desc: 'RSS، اعلان یوتیوب و بازنشر کانال‌های مجاز' },
+  rates: { fa: 'قیمت طلا، دلار و تتر', en: 'Gold, USD & crypto rates', icon: 'trending-up', modules: ['catalog', 'crm', 'broadcast', 'support', 'menu'], desc: 'قیمت لحظه‌ای طلا، سکه، دلار، تتر، ارزها و رمزارزها با نوسانات، سود و زیان و ارسال زمان‌بندی‌شده' },
+  news: { fa: 'خبر مهم کشور ایران', en: 'Iran news publisher', icon: 'newspaper', modules: ['channel', 'broadcast', 'menu', 'support'], desc: 'جمع‌آوری و ارسال خودکار اخبار فوری و مهم کشور از معتبرترین خبرگزاری‌ها به کانال یا پی‌وی' },
   membership: { fa: 'باشگاه محتوای قفل‌دار', en: 'Members library', icon: 'key-round', modules: ['catalog', 'crm', 'broadcast', 'support', 'menu'], desc: 'محتوای ویژه اعضا با چند قفل کانال و گروه' },
 };
 
 export const validPurpose = key => typeof key === 'string' && Object.hasOwn(PURPOSES, key);
 
 export const V2_DEFAULTS = {
+  adminId: '',
   botPurpose: 'custom', customModules: MODULES, botUsername: '', publicBaseUrl: '',
   requiredChats: { enabled: false, targets: [] },
   uploads: { chatId: '', watermark: { enabled: false, text: '', logo: '', opacity: 0.65 } },
@@ -64,6 +66,7 @@ export function mergeV2Settings(s) {
   const legacy = s.requiredChannel?.enabled && s.requiredChannel?.chatId;
   return {
     ...d, ...s, schemaVersion: 3,
+    adminId: str(s.adminId || d.adminId, 32),
     botPurpose: validPurpose(s.botPurpose) ? s.botPurpose : 'custom',
     requiredChats: s.requiredChats || (legacy ? { enabled: true, targets: [{ chatId: s.requiredChannel.chatId, url: s.requiredChannel.url || '', title: '', scope: 'all' }] } : d.requiredChats),
     uploads: { ...d.uploads, ...s.uploads, watermark: { ...d.uploads.watermark, ...s.uploads?.watermark } },
@@ -72,6 +75,11 @@ export function mergeV2Settings(s) {
 }
 
 export function patchV2Settings(s, body) {
+  if ('adminId' in body) {
+    const aid = str(body.adminId, 32);
+    assert(!aid || isChatId(aid) || /^\d+$/.test(aid), 'invalid_admin_id');
+    s.adminId = aid;
+  }
   if ('botPurpose' in body) { assert(validPurpose(body.botPurpose), 'invalid_purpose'); s.botPurpose = body.botPurpose; }
   if ('customModules' in body) { assert(Array.isArray(body.customModules), 'invalid_modules'); s.customModules = [...new Set(body.customModules.filter(m => MODULES.includes(m)))]; }
   if ('botUsername' in body) {

@@ -282,15 +282,36 @@
 
   <noscript><div style="padding:2rem;text-align:center">This app requires JavaScript / این پنل به جاوااسکریپت نیاز دارد.</div></noscript>
 
+    <script src="/vendor/telegram-web-app.js"></script>
     <script src="/vendor/lucide.min.js"></script>
-
-
 
 <script src="/panel.js?v=3.2.0"></script>
 <script src="/studio.js?v=3.2.0"></script>
 <script src="/services.js?v=3.2.0"></script>
 <script>
 (async function () {
+  if (window.Telegram && window.Telegram.WebApp) {
+    try {
+      window.Telegram.WebApp.ready();
+      window.Telegram.WebApp.expand();
+    } catch (e) {}
+    const initData = window.Telegram.WebApp.initData;
+    if (initData && !S.token) {
+      try {
+        const r = await fetch('/api/auth/telegram-admin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initData }),
+        });
+        const j = await r.json();
+        if (j && j.ok && j.data && j.data.token) {
+          S.token = j.data.token;
+          localStorage.setItem('bp_token', j.data.token);
+          S.mustChangePassword = !!j.data.requiresPasswordChange;
+        }
+      } catch (e) {}
+    }
+  }
   if (S.token) { try { const session = await api('/auth/session'); S.mustChangePassword = !!session.requiresPasswordChange; if (!S.mustChangePassword) await initV2(); } catch (e) {} }
   render();
 })();
