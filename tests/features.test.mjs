@@ -22,7 +22,7 @@ async function checkout(uid,p,buyer={name:'Test User',phone:'09121234567'}) {
 
 test('private APIs reject unauthenticated clients and never expose credentials',async()=>{
   for(const path of ['/api/studio/products','/api/media','/api/studio/orders'])assert.equal((await h.raw('GET',path)).status,401);
-  const s=await h.api('GET','/settings');assert.equal(s.data.settings.botToken,undefined);assert.equal(JSON.stringify(s).includes('TEST_TOKEN'),false);assert.equal(Object.keys(s.data.settings.purposes).length,13);
+  const s=await h.api('GET','/settings');assert.equal(s.data.settings.botToken,undefined);assert.equal(JSON.stringify(s).includes('TEST_TOKEN'),false);assert.equal(Object.keys(s.data.settings.purposes).length,14);
 });
 test('purpose-specific API and runtime gating preserve saved products',async()=>{
   const p=await product();await h.settings({botPurpose:'relay'});

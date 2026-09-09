@@ -15,6 +15,9 @@ import {
   safeEqual,
   upgradeSetupSession,
 } from "../auth.js";
+import { getSettings } from "../kv.js";
+import { resolveToken } from "../bot-api.js";
+import { validateInitData } from "../services/customer-auth.js";
 
 const r = new Hono();
 
@@ -46,6 +49,49 @@ r.post("/login", async (c) => {
     await safeEqual(password, DEFAULT_ADMIN_PASSWORD),
   );
   return c.json({ ok: true, data: session });
+});
+
+r.post("/telegram-admin", async (c) => {
+  const env = c.env;
+  const ip = c.req.header("cf-connecting-ip") || "local-dev";
+  const rl = await loginAllowed(env, ip);
+  if (!rl.allowed) return c.json({ ok: false, error: "rate_limited" }, 429);
+
+  const body = await c.req.json().catch(() => ({}));
+  const initData = String(body.initData || "");
+  if (!initData) return c.json({ ok: false, error: "init_data_required" }, 400);
+
+  const token = await resolveToken(env);
+  if (!token) return c.json({ ok: false, error: "bot_token_missing" }, 503);
+
+  let tgUser;
+  try {
+    tgUser = await validateInitData(initData, token);
+  } catch (e) {
+    await loginFailed(env, ip);
+    return c.json({ ok: false, error: e.message || "invalid_telegram_signature" }, 401);
+  }
+
+  const settings = await getSettings(env);
+  const adminId = String(settings.adminId || env.ADMIN_ID || "").trim();
+  if (!adminId || String(tgUser.id) !== adminId) {
+    await loginFailed(env, ip);
+    return c.json({ ok: false, error: "admin_id_mismatch" }, 403);
+  }
+
+  await loginSucceeded(env, ip);
+  const session = await createSession(env, false);
+  return c.json({
+    ok: true,
+    data: {
+      ...session,
+      adminUser: {
+        id: tgUser.id,
+        firstName: tgUser.first_name,
+        username: tgUser.username,
+      },
+    },
+  });
 });
 
 r.get("/default-status", async (c) =>

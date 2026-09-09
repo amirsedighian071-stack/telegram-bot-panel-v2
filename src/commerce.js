@@ -34,7 +34,6 @@ export async function validateProduct(env, body, existing = {}) {
   if (p.categoryId) assert(await getJson(env, entityKey('category', p.categoryId)), 'category_not_found');
   const token = await resolveToken(env);
   for (const key of ['imageId', 'deliveryMediaId']) if (p[key]) { const m = await getMedia(env, p[key]); checkBotMedia(m, token); if (key === 'imageId') assert(m.kind === 'photo', 'product_image_required'); }
-  // Existing reservations must not be reset by editing a stale inventory count.
   if (existing.id && existing.stock !== p.stock) {
     const openOrders = (await allEntities(env, 'order')).some(o => OPEN.includes(o.status) && o.items.some(i => i.id === p.id));
     assert(!openOrders || body.confirmStockChange === true, 'stock_has_reservations');
@@ -56,13 +55,14 @@ export async function catalog(env, token, user, settings, lang, category = 'all'
   if (nav.length) rows.push(nav);
   if (category !== 'all') rows.push([b(tr('همه دسته‌ها', 'All categories', lang), 'cat:all:0')]);
   if (enabled(settings, 'shop')) rows.push([b(tr('🛒 سبد خرید', '🛒 Cart', lang), 'cart:show')]);
+  rows.push([b(tr('🔙 بازگشت به منوی اصلی', '🔙 Back to main menu', lang), 'sub:root')]);
   return say(token, user, products.length ? tr('📚 یک دسته یا محصول را انتخاب کنید:', '📚 Choose a category or an item:', lang) : tr('هنوز محصولی در این دسته موجود نیست.', 'No items in this category yet.', lang), rows);
 }
 
 export async function showProduct(env, token, user, settings, lang, productId) {
   const p = await getProduct(env, productId);
   const category = p?.categoryId ? await getJson(env, entityKey('category', p.categoryId)) : null;
-  if (!p || p.hidden || category?.hidden) return say(token, user, tr('این محصول در دسترس نیست.', 'This item is unavailable.', lang));
+  if (!p || p.hidden || category?.hidden) return say(token, user, tr('این محصول در دسترس نیست.', 'This item is unavailable.', lang), [[b(tr('🔙 منوی اصلی', '🔙 Main menu', lang), 'sub:root')]]);
   let content = `📦 ${titleOf(p, lang)}\n\n${(lang === 'en' && p.descriptionEn) || p.description || ''}\n\n${p.price ? money(p.price, lang) : tr('رایگان', 'Free', lang)}`;
   if (p.stock === 0) content += '\n' + tr('⛔ ناموجود', '⛔ Out of stock', lang);
   const rows = [];
@@ -71,9 +71,26 @@ export async function showProduct(env, token, user, settings, lang, productId) {
     else if (enabled(settings, 'shop')) rows.push([b(tr('🛒 افزودن به سبد', '🛒 Add to cart', lang), `cart:add:${p.id}`)]);
     else rows.push([b(tr('💬 درخواست از پشتیبانی', '💬 Contact support', lang), 'support:open')]);
   }
-  rows.push([b(tr('🗂 دسته‌بندی‌ها', '🗂 Categories', lang), 'cat:all:0')]);
+  rows.push([b(tr('🗂 دسته‌بندی‌ها', '🗂 Categories', lang), 'cat:all:0'), b(tr('🔙 منوی اصلی', '🔙 Main menu', lang), 'sub:root')]);
   if (p.imageId) await sendMedia(env, token, user.id, p.imageId, { caption: titleOf(p, lang) });
   return say(token, user, content.slice(0, 4096), rows);
+}
+
+export async function searchProducts(env, token, user, settings, lang, query = '') {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) {
+    user.flow = { type: 'product_search' };
+    await putUser(env, user);
+    return say(token, user, tr('🔍 نام یا کد محصول مورد نظر خود را وارد کنید:', '🔍 Enter the product name or code to search:', lang), [[b(tr('🔙 منوی اصلی', '🔙 Main menu', lang), 'sub:root')]]);
+  }
+  const hidden = (await allEntities(env, 'category')).filter(c => c.hidden).map(c => c.id);
+  const products = (await allEntities(env, 'product')).filter(p => !p.hidden && !hidden.includes(p.categoryId) && (p.title?.toLowerCase().includes(q) || p.titleEn?.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q) || p.id === q)).slice(0, 10);
+  if (!products.length) {
+    return say(token, user, tr(`محصولی با عبارت «${q}» یافت نشد.`, `No products found matching "${q}".`, lang), [[b(tr('📚 همه محصولات', '📚 All products', lang), 'cat:all:0'), b(tr('🔙 منوی اصلی', '🔙 Main menu', lang), 'sub:root')]]);
+  }
+  const rows = products.map(p => [b(`📦 ${titleOf(p, lang)} · ${money(p.price, lang)}`, `product:${p.id}`)]);
+  rows.push([b(tr('🗂 دسته‌بندی‌ها', '🗂 Categories', lang), 'cat:all:0'), b(tr('🔙 منوی اصلی', '🔙 Main menu', lang), 'sub:root')]);
+  return say(token, user, `🔍 ${tr('نتایج جستجو برای', 'Search results for', lang)} «${q}»:\n${tr('برای مشاهده جزئیات محصول، روی دکمه آن کلیک کنید.', 'Tap an item to view details.', lang)}`, rows);
 }
 
 export async function cartQuote(env, uid, settings) {
@@ -107,7 +124,7 @@ export async function cartQuote(env, uid, settings) {
 
 export async function showCart(env, token, user, settings, lang) {
   const cart = await getCart(env, user.id);
-  if (!cart.items.length) return say(token, user, tr('🛒 سبد خرید شما خالی است.', '🛒 Your cart is empty.', lang), [[b(tr('مشاهده محصولات', 'Browse products', lang), 'cat:all:0')]]);
+  if (!cart.items.length) return say(token, user, tr('🛒 سبد خرید شما خالی است.', '🛒 Your cart is empty.', lang), [[b(tr('مشاهده محصولات', 'Browse products', lang), 'cat:all:0'), b(tr('🔙 منوی اصلی', '🔙 Main menu', lang), 'sub:root')]]);
   let subtotal = 0; const lines = [], rows = [];
   for (const item of cart.items) {
     const p = await getProduct(env, item.id);
@@ -117,14 +134,17 @@ export async function showCart(env, token, user, settings, lang) {
     rows.push([b('−', `cart:minus:${p.id}`), b(`${titleOf(p, lang).slice(0, 22)} × ${item.qty}`, `product:${p.id}`), b('+', `cart:add:${p.id}`), b('✕', `cart:remove:${p.id}`)]);
   }
   let totals = tr('جمع محصولات', 'Subtotal', lang) + ': ' + money(subtotal, lang);
-  try { const quote = await cartQuote(env, user.id, settings); totals += '\n' + tr('قابل پرداخت', 'Total payable', lang) + ': ' + money(quote.total, lang) + (quote.discount + quote.pointsDiscount ? '\n' + tr('تخفیف', 'Discount', lang) + ': ' + money(quote.discount + quote.pointsDiscount, lang) : ''); }
-  catch (e) { totals += '\n⚠ ' + checkoutError(e.message, lang); }
+  try {
+    const quote = await cartQuote(env, user.id, settings);
+    totals += '\n' + tr('قابل پرداخت', 'Total payable', lang) + ': ' + money(quote.total, lang) + (quote.discount + quote.pointsDiscount ? '\n' + tr('تخفیف', 'Discount', lang) + ': ' + money(quote.discount + quote.pointsDiscount, lang) : '');
+  } catch (e) { totals += '\n⚠ ' + checkoutError(e.message, lang); }
   rows.push([b(tr('🎟 کد تخفیف', '🎟 Discount code', lang), 'cart:coupon'), b(tr('حذف کد', 'Clear code', lang), 'cart:clearcoupon')]);
   if (enabled(settings, 'crm') && settings.loyalty.enabled) rows.push([b(`${cart.usePoints ? '☑' : '☐'} ${tr('استفاده از امتیاز', 'Use loyalty points', lang)}`, 'cart:points')]);
   rows.push([b(tr('✅ تسویه حساب', '✅ Checkout', lang), 'checkout:start')]);
-  rows.push([b(tr('🗂 ادامه خرید', '🗂 Continue shopping', lang), 'cat:all:0')]);
+  rows.push([b(tr('🗂 ادامه خرید', '🗂 Continue shopping', lang), 'cat:all:0'), b(tr('🔙 منوی اصلی', '🔙 Main menu', lang), 'sub:root')]);
   return say(token, user, `🛒\n${lines.join('\n')}\n\n${totals}\n${cart.coupon ? '🎟 ' + cart.coupon : ''}`.slice(0, 4096), rows);
 }
+
 export function checkoutError(code, lang) {
   const errors = {
     cart_empty: ['سبد خرید خالی است.', 'The cart is empty.'], insufficient_stock: ['موجودی کافی نیست؛ سبد را اصلاح کنید.', 'Insufficient stock; edit your cart.'],
@@ -151,7 +171,6 @@ export async function createOrder(env, user, settings, buyer, checkoutId, signat
   writes.push(...await rewardWrites(env, user.id, -q.usedPoints, `spend:${order.id}`, 'checkout'));
   order.history.push({ at: Date.now(), status: order.status, source: 'checkout' });
   writes.push([entityKey('order', order.id), order], [entityKey('checkout', checkoutId), order.id], [entityKey('cart', user.id), { items: [], coupon: '', usePoints: false }]);
-  // One SQLite transaction: either stock, coupon, points, order and cart all commit, or none do.
   await commitJson(env, writes);
   const token = await resolveToken(env);
   if (settings.shop.notifyChatId) {
@@ -163,7 +182,7 @@ export async function createOrder(env, user, settings, buyer, checkoutId, signat
 }
 
 export async function paymentInstructions(env, token, user, settings, lang, order) {
-  if (isPaidOrder(order)) return say(token, user, `#${order.id}\n✅ ${statusTitle(order.status, lang)}`);
+  if (isPaidOrder(order)) return say(token, user, `#${order.id}\n✅ ${statusTitle(order.status, lang)}`, [[b(tr('🔙 منوی اصلی', '🔙 Main menu', lang), 'sub:root')]]);
   const rows = [[b(tr('لغو سفارش', 'Cancel order', lang), `order:cancel:${order.id}`)]];
   let message = `#${order.id}\n${tr('مبلغ نهایی', 'Amount', lang)}: ${money(order.total, lang)}\n${tr('مهلت پرداخت', 'Pay before', lang)}: ${new Date(order.expiresAt).toLocaleString(lang === 'en' ? 'en-US' : 'fa-IR', { timeZone: 'Asia/Tehran' })} (Asia/Tehran)`;
   if (order.paymentMethod === 'manual') {
@@ -173,6 +192,7 @@ export async function paymentInstructions(env, token, user, settings, lang, orde
     const base = (env.PUBLIC_BASE_URL || settings.publicBaseUrl).replace(/\/$/, '');
     rows.unshift([{ text: tr('💳 پرداخت امن', '💳 Secure payment', lang), url: `${base}/pay/start/${order.id}?key=${order.paymentKey}` }]);
   }
+  rows.push([b(tr('🔙 منوی اصلی', '🔙 Main menu', lang), 'sub:root')]);
   return say(token, user, message, rows);
 }
 
@@ -238,60 +258,65 @@ export async function approveOrder(env, order, source, payment = {}) {
     writes.push(...await rewardWrites(env, order.userId, -order.usedPoints, `latepoints:${order.id}`, 'late_payment'));
     order.stockReleased = false;
   }
+  if (order.couponId && order.couponReservationReleased) {
+    const c = await getJson(env, entityKey('coupon', order.couponId));
+    if (c) { c.reserved = (c.reserved || 0) + 1; writes.push([entityKey('coupon', c.id), c]); }
+    order.couponReservationReleased = false;
+  }
   if (order.couponId && !order.couponSettled) {
     const c = await getJson(env, entityKey('coupon', order.couponId));
-    if (c) { if (!order.couponReservationReleased) c.reserved = Math.max(0, (c.reserved || 0) - 1); c.used = (c.used || 0) + 1; writes.push([entityKey('coupon', c.id), c]); }
+    if (c) { c.used = (c.used || 0) + 1; c.reserved = Math.max(0, (c.reserved || 0) - 1); writes.push([entityKey('coupon', c.id), c]); }
     order.couponSettled = true;
   }
-  order.status = 'paid'; order.paidAt = Date.now(); order.payment = { ...payment, source };
-  order.history.push({ at: Date.now(), status: 'paid', source });
-  writes.push([entityKey('order', order.id), order]); await commitJson(env, writes);
-  await finishPaidOrder(env, order); return order;
-}
-export async function finishPaidOrder(env, order) {
   const settings = await getSettings(env);
-  if (enabled(settings, 'crm') && settings.loyalty.enabled) await reward(env, order.userId, Math.floor(order.total / settings.loyalty.purchaseUnit), `purchase:${order.id}`, 'purchase');
-  if (!order.paidNotified) { order.paidNotified = true; await saveOrder(env, order); await notifyStatus(env, order); }
+  if (settings.loyalty.enabled && enabled(settings, 'crm') && settings.loyalty.purchaseUnit > 0) {
+    const earned = Math.floor(order.total / settings.loyalty.purchaseUnit);
+    if (earned > 0) writes.push(...await rewardWrites(env, order.userId, earned, `order:${order.id}`, 'purchase'));
+  }
+  order.status = 'paid'; order.payment = { ...payment, source, at: Date.now() };
+  order.history.push({ status: 'paid', at: Date.now(), source });
+  writes.push([entityKey('order', order.id), order]);
+  await commitJson(env, writes);
+  await notifyStatus(env, order);
   return fulfillReady(env, order);
 }
 
 export async function updateOrder(env, orderId, action, body = {}) {
   const o = await getOrder(env, orderId); assert(o, 'order_not_found', 404);
   if (action === 'approve') {
-    assert(o.status === 'receipt_review' || o.status === 'payment_review', 'receipt_or_payment_review_required');
-    return approveOrder(env, o, 'admin_manual_review', o.payment || {});
+    assert(['receipt_review', 'payment_review'].includes(o.status), 'receipt_or_payment_review_required');
+    return approveOrder(env, o, 'admin_receipt_approval');
   }
-  if (action === 'reject') { assert(str(body.reason, 300).length >= 3, 'rejection_reason_required'); return releaseOrder(env, o, 'rejected', body.reason); }
-  if (action === 'notify') { await notifyStatus(env, o); return o; }
-  if (action === 'deliver') {
-    assert(isPaidOrder(o) && o.status !== 'delivered', 'payment_required');
-    assert(str(body.text, 3500) || body.mediaId, 'delivery_content_required');
-    const settings = await getSettings(env), botToken = await resolveToken(env);
-    const gate = await membershipGate(env, botToken, { id: o.userId }, settings);
-    if (!gate.ok) { await sendMembershipLock(botToken, o.userId, gate, o.lang, o.userId); assert(false, 'recipient_membership_required'); }
-    assert(!o.manualDelivery?.attempting && o.manualDelivery?.ok !== true, 'delivery_already_attempted');
-    o.manualDelivery = { attempting: true, at: Date.now() }; await saveOrder(env, o);
-    const token = await resolveToken(env); let r = { ok: true };
-    try {
-      if (body.mediaId) r = await sendMedia(env, token, o.userId, body.mediaId, { caption: `📦 #${o.id}`, protect_content: true });
-      if (r.ok && body.text) r = await sendToUser(token, o.userId, str(body.text, 3500), { protect_content: true });
-    } catch (e) { r = { ok: false, description: e.message }; }
-    o.manualDelivery = { at: Date.now(), ok: !!r.ok, error: r.description || '', attempting: false };
-    if (r.ok) { o.status = 'delivered'; for (const i of o.items) i.fulfillment = 'sent'; o.history.push({ status: 'delivered', at: Date.now(), source: 'manual_delivery' }); }
-    await saveOrder(env, o); if (r.ok) await notifyStatus(env, o); return o;
+  if (action === 'reject') {
+    assert(o.status === 'receipt_review', 'receipt_or_payment_review_required');
+    const reason = str(body.reason, 300); assert(reason, 'rejection_reason_required');
+    o.receipt = null; return releaseOrder(env, o, 'rejected', reason);
   }
-  const allowed = { preparing: ['paid'], shipped: ['paid', 'preparing'], delivered: ['paid', 'preparing', 'shipped'] };
-  assert(allowed[action]?.includes(o.status), 'invalid_order_transition');
-  if (action === 'shipped') assert(str(body.trackingCode, 160), 'tracking_required');
-  o.status = action; o.trackingCode = str(body.trackingCode || o.trackingCode, 160);
-  o.history.push({ status: action, at: Date.now(), source: 'admin' }); await saveOrder(env, o); await notifyStatus(env, o); return o;
+  if (['preparing', 'shipped', 'delivered', 'cancelled'].includes(action)) {
+    if (['preparing', 'shipped', 'delivered'].includes(action)) assert(isPaidOrder(o), 'payment_required');
+    if (action === 'shipped') { o.trackingCode = str(body.trackingCode, 120); assert(o.trackingCode, 'tracking_required'); }
+    if (action === 'cancelled') return releaseOrder(env, o, 'cancelled', str(body.reason, 300));
+    o.status = action; o.history.push({ status: action, at: Date.now(), source: 'admin_update' });
+    await saveOrder(env, o); await notifyStatus(env, o); return o;
+  }
+  if (action === 'deliver_again') {
+    assert(isPaidOrder(o) && o.items.some(i => i.deliveryMode === 'ready' && i.fulfillment !== 'sent'), 'delivery_already_attempted');
+    for (const i of o.items) if (i.deliveryMode === 'ready' && i.fulfillment !== 'sent') i.fulfillment = 'pending';
+    await saveOrder(env, o); return fulfillReady(env, o);
+  }
+  assert(false, 'invalid_order_transition');
 }
+
 export async function expireOrders(env) {
+  const now = Date.now();
+  const openOrders = (await allEntities(env, 'order')).filter(o => o.status === 'awaiting_payment' && o.expiresAt <= now);
+  for (const order of openOrders) await releaseOrder(env, order, 'expired', 'reservation_timeout');
+  const stuck = (await allEntities(env, 'order')).filter(o => o.deliveryLocked && isPaidOrder(o) && o.nextDeliveryCheck && o.nextDeliveryCheck <= now);
+  for (const o of stuck) await fulfillReady(env, o);
   for (const o of await allEntities(env, 'order')) {
-    if (OPEN.includes(o.status) && o.expiresAt < Date.now()) await releaseOrder(env, o, 'expired');
-    else if (isPaidOrder(o) && (!o.nextDeliveryCheck || o.nextDeliveryCheck <= Date.now()) && (!o.paidNotified || o.items.some(i => i.deliveryMode === 'ready' && ['pending', 'sending'].includes(i.fulfillment)) || (o.status !== 'delivered' && o.items.every(i => i.fulfillment === 'sent')))) {
+    if (isPaidOrder(o) && o.items.some(i => i.fulfillment === 'sending' && (Date.now() - (o.updatedAt || o.createdAt) > 300000) && (!o.history.some(h => h.status === 'delivered') && !o.items.every(i => i.fulfillment === 'sent')))) {
       for (const i of o.items) if (i.fulfillment === 'sending') { i.fulfillment = 'review'; i.deliveryError = 'delivery_interrupted_check_destination'; }
-      await saveOrder(env, o); await finishPaidOrder(env, o);
+      await saveOrder(env, o);
     }
   }
 }
@@ -299,7 +324,14 @@ export async function expireOrders(env) {
 export async function commerceCallback(env, token, user, settings, lang, data) {
   if (!enabled(settings, 'catalog') && !enabled(settings, 'shop')) return false;
   const [cmd, action, pid] = data.split(':');
-  if (cmd === 'cat') { await catalog(env, token, user, settings, lang, action || 'all', int(pid, 0, 10000, 0)); return true; }
+  if (cmd === 'cat') {
+    if (action === 'search') {
+      await searchProducts(env, token, user, settings, lang, '');
+      return true;
+    }
+    await catalog(env, token, user, settings, lang, action || 'all', int(pid, 0, 10000, 0));
+    return true;
+  }
   if (cmd === 'product') { await showProduct(env, token, user, settings, lang, action); return true; }
   if (cmd === 'download') {
     const p = await getProduct(env, action);
@@ -360,9 +392,14 @@ export async function commerceCallback(env, token, user, settings, lang, data) {
 }
 
 export async function commerceMessage(env, token, user, settings, lang, msg) {
-  if (!enabled(settings, 'shop')) return false;
+  if (!enabled(settings, 'catalog') && !enabled(settings, 'shop')) return false;
   const flow = user.flow, input = str(msg.text, 1000);
-  if (!flow || !['coupon', 'checkout', 'receipt'].includes(flow.type)) return false;
+  if (!flow || !['coupon', 'checkout', 'receipt', 'product_search'].includes(flow.type)) return false;
+  if (flow.type === 'product_search') {
+    user.flow = null; await putUser(env, user);
+    await searchProducts(env, token, user, settings, lang, input);
+    return true;
+  }
   if (flow.type === 'receipt') {
     const o = await getOrder(env, flow.orderId);
     assert(o && o.userId === String(user.id) && o.status === 'awaiting_payment' && o.expiresAt > Date.now(), 'receipt_not_allowed');
@@ -403,13 +440,14 @@ export async function commerceMessage(env, token, user, settings, lang, msg) {
   }
   return true;
 }
+
 export async function myOrders(env, token, user, lang) {
   const orders = (await allEntities(env, 'order')).filter(o => o.userId === String(user.id)).sort((a, b) => b.createdAt - a.createdAt).slice(0, 10);
   for (const o of orders) await say(token, user, `📦 #${o.id}\n${statusTitle(o.status, lang)}\n${money(o.total, lang)}${o.trackingCode ? '\n' + o.trackingCode : ''}`, o.status === 'awaiting_payment' ? [[b(tr('پرداخت / ارسال فیش', 'Pay / submit receipt', lang), `order:pay:${o.id}`)]] : undefined);
-  if (!orders.length) await say(token, user, tr('هنوز سفارشی ثبت نکرده‌اید.', 'You have no orders yet.', lang));
+  if (!orders.length) await say(token, user, tr('هنوز سفارشی ثبت نکرده‌اید.', 'You have no orders yet.', lang), [[b(tr('🛍 فروشگاه', '🛍 Store', lang), 'cat:all:0'), b(tr('🔙 منوی اصلی', '🔙 Main menu', lang), 'sub:root')]]);
 }
 
 export async function resumeMemberDeliveries(env, userId) {
   const orders = (await allEntities(env, 'order')).filter(o => o.userId === String(userId) && o.deliveryLocked && isPaidOrder(o));
-  for (const order of orders) await finishPaidOrder(env, order);
+  for (const order of orders) await fulfillReady(env, order);
 }

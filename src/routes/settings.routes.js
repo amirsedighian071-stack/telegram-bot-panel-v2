@@ -1,4 +1,3 @@
-
 import { Hono } from 'hono';
 import { requireAuth } from '../auth.js';
 import { getSettings, saveSettings } from '../kv.js';
@@ -12,10 +11,13 @@ const fail = (c, error, status = 400) => c.json({ ok: false, error }, status);
 
 export function publicView(settings, envToken, env = {}) {
   const token = settings.botToken || envToken || '';
+  const adminId = settings.adminId || env.ADMIN_ID || '';
+  const publicBaseUrl = env.PUBLIC_BASE_URL || settings.publicBaseUrl || '';
   return {
     hasToken: !!token,
     tokenMasked: token ? `${'•'.repeat(8)}${token.slice(-4)}` : '',
     source: settings.botToken ? 'kv' : envToken ? 'env' : 'none',
+    adminId,
     defaultLang: settings.defaultLang,
     botLangMode: settings.botLangMode || 'both',
     supportButton: settings.supportButton,
@@ -24,7 +26,12 @@ export function publicView(settings, envToken, env = {}) {
     botPurpose: settings.botPurpose, customModules: settings.customModules, modules: activeModules(settings), purposes: PURPOSES,
     botUsername: settings.botUsername, requiredChats: settings.requiredChats, uploads: settings.uploads,
     shop: settings.shop, relay: settings.relay, loyalty: settings.loyalty,
-    integrations: { zarinpal: !!env.ZARINPAL_MERCHANT_ID, sandbox: env.ZARINPAL_SANDBOX === 'true', mediaProcessor: !!(env.MEDIA_PROCESSOR_URL && env.MEDIA_PROCESSOR_SECRET), durableStorage: !!env.BOT_STATE || !!env.__coordinated, publicBaseUrl: env.PUBLIC_BASE_URL || settings.publicBaseUrl || '' },
+    miniApp: {
+      url: publicBaseUrl,
+      adminId,
+      configured: !!(token && adminId && publicBaseUrl),
+    },
+    integrations: { zarinpal: !!env.ZARINPAL_MERCHANT_ID, sandbox: env.ZARINPAL_SANDBOX === 'true', mediaProcessor: !!(env.MEDIA_PROCESSOR_URL && env.MEDIA_PROCESSOR_SECRET), durableStorage: !!env.BOT_STATE || !!env.__coordinated, publicBaseUrl },
   };
 }
 
@@ -102,8 +109,10 @@ r.post('/webhook', async (c) => {
       drop_pending_updates: false,
     });
     if (res.ok) {
-      const settings = await getSettings(env); settings.publicBaseUrl = publicBase; await saveSettings(env, settings);
-      return c.json({ ok: true, data: { url, result: res.result } });
+      const settings = await getSettings(env);
+      settings.publicBaseUrl = publicBase;
+      await saveSettings(env, settings);
+      return c.json({ ok: true, data: { url, miniAppUrl: publicBase, result: res.result } });
     }
   }
 
