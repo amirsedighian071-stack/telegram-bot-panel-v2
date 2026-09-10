@@ -206,8 +206,13 @@ export async function collectTargetIds(env, withinDays = 0) {
   return ids;
 }
 
-export const getStats = (env) =>
-  getJson(env, K.STATS, { users: 0, banned: 0, messages: 0, broadcasts: 0, sent: 0 });
+const DEFAULT_STATS = { users: 0, banned: 0, messages: 0, broadcasts: 0, sent: 0 };
+
+export const getStats = async (env) => {
+  const raw = await getJson(env, K.STATS, null);
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return { ...DEFAULT_STATS, ...raw };
+  return { ...DEFAULT_STATS };
+};
 
 export async function bumpStats(env, patch) {
   const s = await getStats(env);
@@ -217,13 +222,15 @@ export async function bumpStats(env, patch) {
 }
 
 export async function pushRecentUser(env, id) {
-  const arr = (await getJson(env, K.RECENT_USERS, [])) || [];
+  const raw = await getJson(env, K.RECENT_USERS, []);
+  const arr = Array.isArray(raw) ? raw : [];
   arr.unshift(String(id));
   await putJson(env, K.RECENT_USERS, [...new Set(arr)].slice(0, 10));
 }
 
 export async function getRecentUsers(env) {
-  const ids = (await getJson(env, K.RECENT_USERS, [])) || [];
+  const raw = await getJson(env, K.RECENT_USERS, []);
+  const ids = Array.isArray(raw) ? raw : [];
   const users = await Promise.all(ids.map((id) => getUser(env, id)));
   return users.filter(Boolean).map((u) => ({
     id: u.id, firstName: u.firstName || '', username: u.username || '',
@@ -232,13 +239,15 @@ export async function getRecentUsers(env) {
 }
 
 export async function pushBroadcastId(env, id) {
-  const arr = (await getJson(env, K.BROADCAST_INDEX, [])) || [];
+  const raw = await getJson(env, K.BROADCAST_INDEX, []);
+  const arr = Array.isArray(raw) ? raw : [];
   arr.unshift(id);
   await putJson(env, K.BROADCAST_INDEX, [...new Set(arr)].slice(0, 20));
 }
 
 export async function getRecentBroadcasts(env) {
-  const ids = (await getJson(env, K.BROADCAST_INDEX, [])) || [];
+  const raw = await getJson(env, K.BROADCAST_INDEX, []);
+  const ids = Array.isArray(raw) ? raw : [];
   const jobs = await Promise.all(ids.map((id) => getJson(env, K.BROADCAST(id))));
   return jobs
     .filter(Boolean)
@@ -258,13 +267,15 @@ export const getPost = (env, id) => getJson(env, K.POST(id));
 export const putPost = (env, post) => putJson(env, K.POST(post.id), post);
 
 export async function pushEngIndex(env, type, id) {
-  const arr = (await getJson(env, K.ENG_INDEX, [])) || [];
+  const raw = await getJson(env, K.ENG_INDEX, []);
+  const arr = Array.isArray(raw) ? raw : [];
   arr.unshift({ t: type, id, at: Date.now() });
   await putJson(env, K.ENG_INDEX, arr.slice(0, 50));
 }
 
 export async function getEngagementLists(env) {
-  const idx = (await getJson(env, K.ENG_INDEX, [])) || [];
+  const raw = await getJson(env, K.ENG_INDEX, []);
+  const idx = Array.isArray(raw) ? raw : [];
   const polls = [], posts = [];
   for (const e of idx) {
     if (e.t === 'poll' && polls.length < 20) {
