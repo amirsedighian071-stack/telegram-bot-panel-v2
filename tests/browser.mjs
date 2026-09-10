@@ -47,7 +47,9 @@ try {
 
   await navigate('settings'); await page.waitForSelector('#v-profile-cards');
   assert.equal(await page.locator('.v-profile').count(), 13);
-  assert.equal(await page.locator('html').getAttribute('data-panel-version'), '3.1.0');
+  // Read from package.json: build-panel.mjs stamps this attribute from the same source,
+              // so a hardcoded literal here silently rots on every version bump.
+  assert.equal(await page.locator('html').getAttribute('data-panel-version'), JSON.parse(fs.readFileSync('package.json', 'utf8')).version);
   await page.locator('.v-profile[data-id="channel"]').click();
   assert((await page.locator('#v-purpose-preview').innerText()).includes('دیپ‌لینک'));
   assert.equal(await page.locator('.v-profile[data-id="channel"]').getAttribute('aria-pressed'), 'true');
