@@ -10,9 +10,10 @@ export const NEWS_CATEGORIES = {
   economy: { fa: '📈 اخبار اقتصادی و بازار', en: '📈 Economy & Markets', icon: 'trending-up' },
   sports: { fa: '⚽ اخبار ورزشی', en: '⚽ Sports News', icon: 'trophy' },
   tech: { fa: '💻 فناوری و دانش‌بنیان', en: '💻 Tech & Innovation', icon: 'cpu' },
+  world: { fa: '🌍 خبرهای کل جهان', en: '🌍 World News', icon: 'globe-2' },
 };
 export const NEWS_CATEGORY_KEYS = ['all', ...Object.keys(NEWS_CATEGORIES)];
-export const NEWS_SEND_CATS = ['breaking', 'politics', 'economy', 'sports', 'tech'];
+export const NEWS_SEND_CATS = ['breaking', 'politics', 'economy', 'sports', 'tech', 'world'];
 
 export const NEWS_SOURCES = [
   { id: 'irna', name: 'خبرگزاری ایرنا (IRNA)', url: 'https://www.irna.ir/rss' },
@@ -20,6 +21,16 @@ export const NEWS_SOURCES = [
   { id: 'mehr', name: 'خبرگزاری مهر (Mehr)', url: 'https://www.mehrnews.com/rss' },
   { id: 'tasnim', name: 'خبرگزاری تسنیم (Tasnim)', url: 'https://www.tasnimnews.com/fa/rss/feed/0/0/0' },
   { id: 'tabnak', name: 'تابناک (Tabnak)', url: 'https://www.tabnak.ir/fa/rss/allnews' },
+];
+
+// World news is deliberately kept separate from the Iranian feeds.  Apart from
+// giving users a clear choice, this prevents an Iranian headline from silently
+// appearing in the world-news view when one provider is unavailable.
+export const WORLD_NEWS_SOURCES = [
+  { id: 'bbc-world', name: 'BBC World', url: 'https://feeds.bbci.co.uk/news/world/rss.xml' },
+  { id: 'aljazeera-world', name: 'Al Jazeera', url: 'https://www.aljazeera.com/xml/rss/all.xml' },
+  { id: 'guardian-world', name: 'The Guardian World', url: 'https://www.theguardian.com/world/rss' },
+  { id: 'npr-world', name: 'NPR World', url: 'https://feeds.npr.org/1004/rss.xml' },
 ];
 
 export const FALLBACK_NEWS = [
@@ -140,11 +151,55 @@ export async function aggregateNews(env) {
   return merged;
 }
 
+export async function aggregateWorldNews(env) {
+  const cached = await Promise.all(WORLD_NEWS_SOURCES.map(src => getJson(env, `v2:news:world:${src.id}`)));
+  const settled = await Promise.allSettled(WORLD_NEWS_SOURCES.map(async (src, i) => {
+    const hit = cached[i];
+    if (hit && Date.now() - (hit.at || 0) < SRC_CACHE_TTL && Array.isArray(hit.items)) return hit.items;
+    let items = [];
+    try {
+      const feed = parseFeed(await publicFeed(src.url));
+      items = feed.map((item, idx) => ({
+        id: `world:${src.id}:${item.id}`,
+        title: item.title,
+        summary: item.summary,
+        url: item.url,
+        source: src.name,
+        publishedAt: Date.now() - idx * 10 * 60000,
+        region: 'world',
+      }));
+    } catch {}
+    await putJson(env, `v2:news:world:${src.id}`, { at: Date.now(), items }, { ttl: Math.ceil(SRC_CACHE_TTL / 1000) });
+    return items;
+  }));
+  const merged = [], seen = new Set();
+  for (const r of settled) {
+    if (r.status !== 'fulfilled') continue;
+    for (const item of r.value) {
+      const key = normalize(item.title).slice(0, 100);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
+export const WORLD_FALLBACK_NEWS = [
+  { id: 'world-1', title: 'World news updates from international sources', summary: 'Live international headlines will appear here as soon as a world-news feed is available.', source: 'World news', url: 'https://www.bbc.com/news/world', publishedAt: Date.now() },
+];
+
 const fallbackWithCategory = (category) =>
   FALLBACK_NEWS.filter(n => n.category === category).map(n => ({ ...n, id: 'fb:' + n.id }));
 
 export async function fetchLiveNews(env, category = 'breaking') {
-  const live = (await aggregateNews(env)).map(item => ({ ...item, category: classifyItem(item) }));
+  if (category === 'world') {
+    const liveWorld = await aggregateWorldNews(env);
+    return (liveWorld.length
+      ? liveWorld.map(item => ({ ...item, category: 'world', region: 'world' }))
+      : WORLD_FALLBACK_NEWS.map(n => ({ ...n, id: `fb:${n.id}`, category: 'world', region: 'world' }))).slice(0, 12);
+  }
+  const live = (await aggregateNews(env)).map(item => ({ ...item, category: classifyItem(item), region: 'iran' }));
   const mixed = category === 'breaking' || category === 'all';
   if (mixed) {
     if (live.length) return live.slice(0, 12);
@@ -165,13 +220,13 @@ export function newsDigestText(items, category = 'all', lang = 'fa') {
   const now = new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', dateStyle: 'full', timeStyle: 'short' }).format(new Date());
   const header = category === 'all'
     ? `📰 ${tr('خلاصه خبرهای مهم امروز', 'Today\'s top news digest', lang)}\n🕐 ${now}\n────────────────────`
-    : `${NEWS_CATEGORIES[category]?.fa || NEWS_CATEGORIES.breaking.fa}\n🕐 ${now}\n────────────────────`;
+    : `${(NEWS_CATEGORIES[category] && (lang === 'en' ? NEWS_CATEGORIES[category].en : NEWS_CATEGORIES[category].fa)) || NEWS_CATEGORIES.breaking.fa}\n🕐 ${now}\n────────────────────`;
   let body = '';
   if (category === 'all') {
     for (const cat of NEWS_SEND_CATS) {
       const rows = items.filter(i => i.category === cat).slice(0, 2);
       if (!rows.length) continue;
-      body += `\n${NEWS_CATEGORIES[cat].fa}\n`;
+      body += `\n${lang === 'en' ? NEWS_CATEGORIES[cat].en : NEWS_CATEGORIES[cat].fa}\n`;
       for (const item of rows) body += `• ${item.title}\n🔗 ${item.url}\n`;
     }
   } else {
@@ -256,9 +311,13 @@ export async function newsHome(env, token, user, lang = 'fa') {
     text += `${i + 1}. 📌 ${n.title}\n   🔹 ${String(n.summary || '').slice(0, 120)}…\n   🏛 ${n.source}\n\n`;
   }
   text += `────────────────────\n` +
-    `${tr('برای مشاهده اخبار بر اساس موضوع، یکی از دسته‌بندی‌های زیر را انتخاب کنید:', 'Select a category below to browse news:', lang)}`;
+    `${tr('منبع خبر را انتخاب کنید یا اخبار را بر اساس موضوع ببینید:', 'Choose a news region or browse by topic:', lang)}`;
 
   const rows = [
+    [
+      { text: '🇮🇷 ' + tr('اخبار ایران', 'Iran News', lang), callback_data: 'news:iran' },
+      { text: '🌍 ' + tr('اخبار کل جهان', 'World News', lang), callback_data: 'news:world' },
+    ],
     [
       { text: '🚨 ' + tr('خبرهای فوری', 'Breaking', lang), callback_data: 'news:cat:breaking' },
       { text: '🏛 ' + tr('سیاسی و دولت', 'Politics', lang), callback_data: 'news:cat:politics' },
@@ -283,7 +342,7 @@ export async function newsCategory(env, token, user, lang = 'fa', category = 'br
   const catInfo = NEWS_CATEGORIES[category] || NEWS_CATEGORIES.breaking;
   const items = await fetchLiveNews(env, category);
 
-  let text = `${catInfo.fa}\n${tr('به‌روزشده:', 'Updated:', lang)} ${new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit' }).format(new Date())}\n────────────────────\n\n`;
+  let text = `${lang === 'en' ? catInfo.en : catInfo.fa}\n${tr('به‌روزشده:', 'Updated:', lang)} ${new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit' }).format(new Date())}\n────────────────────\n\n`;
   const rows = [];
 
   for (let i = 0; i < items.length; i++) {
@@ -337,8 +396,12 @@ export async function newsCallback(env, token, user, lang, data) {
   const parts = data.split(':');
   const action = parts[1];
 
-  if (action === 'home' || action === 'refresh') {
+  if (action === 'home' || action === 'iran' || action === 'refresh') {
     await newsHome(env, token, user, lang);
+    return true;
+  }
+  if (action === 'world') {
+    await newsCategory(env, token, user, lang, 'world');
     return true;
   }
   if (action === 'cat') {

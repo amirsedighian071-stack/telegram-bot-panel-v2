@@ -126,6 +126,18 @@ function tagButtons(rows, src) {
 }
 
 export function inlineMarkup(menu, settings, lang, user = null) {
+  // The news-purpose bot is intentionally a focused two-option bot. Do not leak
+  // support, language, custom-menu or other module buttons into its home screen;
+  // administration remains available through /admin for the owner.
+  if (settings.botPurpose === 'news') {
+    return pageMarkup([[{
+      text: tr('🇮🇷 اخبار ایران', '🇮🇷 Iran News', lang),
+      type: 'callback', value: 'news:iran',
+    }, {
+      text: tr('🌍 اخبار کل جهان', '🌍 World News', lang),
+      type: 'callback', value: 'news:world',
+    }]], { withBack: false });
+  }
   const custom = settings.botPurpose === 'custom' || menu.customized;
   const adminRows = [];
   if (user && settings.adminId && String(user.id) === String(settings.adminId) && settings.publicBaseUrl) {
@@ -180,7 +192,10 @@ function systemRows(settings, lang) {
   if (enabled(settings, 'catalog')) rows.push([cb(tr('📚 محصولات و دسته‌بندی‌ها', '📚 Catalog & categories', lang), 'cat:all:0')]);
   if (enabled(settings, 'shop')) rows.push([cb(tr('🛒 سبد خرید', '🛒 Cart', lang), 'cart:show'), cb(tr('📦 سفارش‌های من', '📦 My orders', lang), 'orders:mine')]);
   if (settings.botPurpose === 'rates' || settings.botPurpose === 'custom') rows.push([cb(tr('📈 قیمت طلا، دلار و تتر', '📈 Gold, USD & Rates', lang), 'rates:home')]);
-  if (settings.botPurpose === 'news' || settings.botPurpose === 'custom') rows.push([cb(tr('📰 اخبار مهم کشور ایران', '📰 Iran News', lang), 'news:home')]);
+  if (settings.botPurpose === 'news' || settings.botPurpose === 'custom') rows.push([
+    cb(tr('🇮🇷 اخبار ایران', '🇮🇷 Iran News', lang), 'news:iran'),
+    cb(tr('🌍 اخبار کل جهان', '🌍 World News', lang), 'news:world'),
+  ]);
   if (enabled(settings, 'learning')) rows.push([cb(tr('🎓 پیشرفت من', '🎓 My progress', lang), 'learn:progress')]);
   if (enabled(settings, 'faq')) rows.push([cb(tr('💡 پرسش‌های متداول', '💡 Frequently asked questions', lang), 'faq:list')]);
   if (enabled(settings, 'crm') && settings.loyalty.enabled) rows.push([cb(tr('⭐ امتیاز و دعوت دوستان', '⭐ Points & referrals', lang), 'crm:points')]);

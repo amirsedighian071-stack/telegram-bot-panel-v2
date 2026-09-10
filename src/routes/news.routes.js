@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { requireAuth } from '../auth.js';
 import { getSettings, saveSettings, getJson } from '../kv.js';
 import { patchV2Settings, enabled, assert } from '../config.js';
-import { NEWS_CATEGORIES, NEWS_CATEGORY_KEYS, fetchLiveNews, sendNewsDigest, newsDestinations } from '../news.js';
+import { NEWS_CATEGORIES, NEWS_CATEGORY_KEYS, NEWS_SEND_CATS, fetchLiveNews, sendNewsDigest, newsDestinations } from '../news.js';
 
 const r = new Hono();
 r.use('*', requireAuth);
@@ -36,7 +36,7 @@ r.get('/latest', async (c) => {
   let items;
   if (category === 'all') {
     items = [];
-    for (const cat of ['breaking', 'politics', 'economy', 'sports', 'tech']) items.push(...(await fetchLiveNews(c.env, cat)).slice(0, 2));
+    for (const cat of NEWS_SEND_CATS) items.push(...(await fetchLiveNews(c.env, cat)).slice(0, 2));
   } else items = await fetchLiveNews(c.env, category);
   return result(c, { category, items });
 });

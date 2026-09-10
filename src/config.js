@@ -139,7 +139,7 @@ export function patchV2Settings(s, body) {
     const a = body.news.autoSend || body.news;
     const dest = Array.isArray(a.destinations) ? a.destinations : s.news.autoSend.destinations;
     assert(dest.length <= 10 && dest.every(d => isChatId(typeof d === 'string' ? d : d.chatId)), 'invalid_destinations');
-    const category = ['all', 'breaking', 'politics', 'economy', 'sports', 'tech'].includes(a.category) ? a.category : 'all';
+    const category = ['all', 'breaking', 'politics', 'economy', 'sports', 'tech', 'world'].includes(a.category) ? a.category : 'all';
     const interval = int(a.intervalMinutes, 10, 1440, 60);
     assert(interval !== undefined, 'invalid_news_interval');
     s.news = { autoSend: { enabled: !!a.enabled, category, intervalMinutes: Number(interval), destinations: dest.map(d => typeof d === 'string' ? { chatId: str(d, 64), title: '' } : { chatId: str(d.chatId, 64), title: str(d.title, 64) }) } };
