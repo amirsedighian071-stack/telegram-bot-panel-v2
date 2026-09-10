@@ -3,6 +3,7 @@ import { requireAuth } from './auth.js';
 import { K, getJson, putJson, getSettings, bumpStats, getUser, putUser, collectTargetIds, pushBroadcastId, pushEngIndex, getRecentBroadcasts } from './kv.js';
 import { entityKey, allEntities } from './storage.js';
 import { assert, id, int, str, isChatId, urlButtons, enabled } from './config.js';
+import { readJson, requireObject } from './body.js';
 import { tgApi, sendToUser, resolveToken } from './bot-api.js';
 import { getMedia, sendMedia, checkBotMedia } from './media.js';
 import { sendPollToChat, reactMarkup } from './engagement.js';
@@ -147,7 +148,7 @@ export async function broadcastTick(env) {
   }
 }
 const r = new Hono(); r.use('*', requireAuth);
-r.post('/', async c => c.json({ ok: true, data: await createBroadcast(c.env, await c.req.json()) }));
+r.post('/', async c => c.json({ ok: true, data: await createBroadcast(c.env, await readJson(c)) }));
 r.get('/', async c => { const all = await broadcastJobs(c.env); return c.json({ ok: true, data: { jobs: all.sort((a, b) => b.createdAt - a.createdAt).slice(0, 100).map(jobView) } }); });
 r.get('/:id', async c => { const j = await getJson(c.env, K.BROADCAST(c.req.param('id'))); assert(j, 'not_found', 404); return c.json({ ok: true, data: { job: jobView(j) } }); });
 r.post('/:id/tick', async c => c.json({ ok: true, data: { job: jobView(await tickBroadcast(c.env, c.req.param('id'))) } }));

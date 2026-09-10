@@ -2,6 +2,7 @@
 import { Hono } from 'hono';
 import { requireAuth } from '../auth.js';
 import { creatorState, markRead, dismiss, panelBase, ensureCreatorLink, sendSupport } from '../creator.js';
+import { readJson } from '../body.js';
 
 const r = new Hono();
 r.use('*', requireAuth);
@@ -15,14 +16,14 @@ r.get('/state', async (c) => {
 });
 
 r.post('/support', async (c) => {
-  const body = await c.req.json().catch(() => ({}));
+  const body = await readJson(c);
   const text = String(body.text || '').trim();
   if (!text || text.length > 4000) return fail(c, 'invalid_text');
   return c.json({ ok: true, data: await sendSupport(c.env, panelBase(c, c.env), text) });
 });
 
 r.post('/dismiss', async (c) => {
-  const body = await c.req.json().catch(() => ({}));
+  const body = await readJson(c);
   if (!['update', 'notice'].includes(body.kind)) return fail(c, 'invalid_kind');
   return c.json({ ok: true, data: await dismiss(c.env, body.kind, body.id) });
 });

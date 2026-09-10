@@ -16,6 +16,7 @@ import {
   constantEqual,
   publicHTTPS,
 } from "./common.js";
+import { readJson } from "../body.js";
 
 export const TENANT_KEY = key("tenant", "main");
 export function childStub(env, botId) {
@@ -105,7 +106,7 @@ routes.get("/", async (c) =>
   c.json({ ok: true, data: { bots: (await list(c.env, "bot")).map(botView) } }),
 );
 routes.post("/", async (c) => {
-  const body = await c.req.json();
+  const body = await readJson(c);
   const token = str(body.token, 256);
   assert(/^\d+:[A-Za-z0-9_-]+$/.test(token), "invalid_bot_token");
   assert((await list(c.env, "bot")).length < 20, "managed_bot_limit");
@@ -176,7 +177,7 @@ routes.post("/:id/initialize", async (c) => {
 });
 routes.put("/:id/token", async (c) => {
   const bot = await requireChild(c.env, c.req.param("id")),
-    body = await c.req.json(),
+    body = await readJson(c),
     token = str(body.token, 256);
   const me = await tgApi(token, "getMe");
   assert(

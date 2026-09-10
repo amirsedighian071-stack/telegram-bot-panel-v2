@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { requireAuth } from '../auth.js';
 import { DEFAULT_MENU, getMenu, saveMenu, getSettings } from '../kv.js';
 import { resolveToken, sendStart } from '../telegram.js';
+import { readJson } from '../body.js';
 
 const r = new Hono();
 r.use('*', requireAuth);
@@ -77,14 +78,14 @@ r.get('/', async (c) =>
 );
 
 r.put('/', async (c) => {
-  const body = await c.req.json().catch(() => ({}));
+  const body = await readJson(c);
   const menu = sanitizeMenu(body);
   await saveMenu(c.env, menu);
   return c.json({ ok: true, data: { menu } });
 });
 
 r.post('/preview', async (c) => {
-  const body = await c.req.json().catch(() => ({}));
+  const body = await readJson(c);
   const chatId = Number(body.chatId);
   if (!Number.isInteger(chatId) || chatId <= 0) return fail(c, 'invalid_chat_id');
 
