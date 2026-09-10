@@ -33,6 +33,18 @@ export const WORLD_NEWS_SOURCES = [
   { id: 'npr-world', name: 'NPR World', url: 'https://feeds.npr.org/1004/rss.xml' },
 ];
 
+/* International outlets publish in English, so the world-news view is shown fully
+ * in Persian: headlines and summaries are machine-translated (see translateToPersian)
+ * and outlet names are mapped to their Persian equivalents. */
+const WORLD_SOURCE_FA = {
+  'bbc-world': 'بی‌بی‌سی',
+  'aljazeera-world': 'الجزیره',
+  'guardian-world': 'گاردین',
+  'npr-world': 'ان‌پی‌آر',
+};
+const WORLD_SOURCE_BY_NAME = Object.fromEntries(WORLD_NEWS_SOURCES.map((s) => [s.name, WORLD_SOURCE_FA[s.id]]));
+const persianSourceName = (item) => WORLD_SOURCE_FA[item.sourceId] || WORLD_SOURCE_BY_NAME[item.source] || item.source;
+
 export const FALLBACK_NEWS = [
   {
     id: 'n1',
@@ -164,7 +176,8 @@ export async function aggregateWorldNews(env) {
         title: item.title,
         summary: item.summary,
         url: item.url,
-        source: src.name,
+        source: WORLD_SOURCE_FA[src.id] || src.name,
+        sourceId: src.id,
         publishedAt: Date.now() - idx * 10 * 60000,
         region: 'world',
       }));
@@ -186,8 +199,58 @@ export async function aggregateWorldNews(env) {
 }
 
 export const WORLD_FALLBACK_NEWS = [
-  { id: 'world-1', title: 'World news updates from international sources', summary: 'Live international headlines will appear here as soon as a world-news feed is available.', source: 'World news', url: 'https://www.bbc.com/news/world', publishedAt: Date.now() },
+  { id: 'world-1', title: 'اخبار جهانی از منابع بین‌المللی', summary: 'به‌محض در دسترس بودن فید خبری جهانی، تیترهای بین‌المللی به‌صورت زنده و فارسی همین‌جا نمایش داده می‌شود.', source: 'اخبار جهانی', url: 'https://www.bbc.com/news/world', publishedAt: Date.now() },
 ];
+
+/* ---- Persian translation for the world-news section ----
+ * International feeds publish in English; every headline and summary shown to
+ * the user is translated to Persian. Translations are cached in KV for two weeks
+ * keyed by the source text, so each headline is translated at most once. Any
+ * failure (no network, upstream limits) returns the original text — the news
+ * view degrades gracefully instead of breaking. */
+const TR_TTL_SEC = 14 * 24 * 3600;
+const TR_TEXT_MAX = 900;
+const TR_HAS_PERSIAN = /[\u0600-\u06FF]/;
+const TR_HAS_LATIN = /[A-Za-z]{2,}/;
+
+const translatable = (s) => TR_HAS_LATIN.test(s) && !TR_HAS_PERSIAN.test(s.slice(0, 120));
+
+async function sha256Hex(value) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function gtxFetch(text) {
+  const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=fa&dt=t&q=' + encodeURIComponent(text);
+  const res = await fetch(url, {
+    headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (compatible; NewsBot/3)' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`translate_http_${res.status}`);
+  const data = await res.json();
+  const out = Array.isArray(data?.[0]) ? data[0].map((seg) => (Array.isArray(seg) ? seg[0] : '') || '').join('') : '';
+  const fa = String(out).replace(/\s+/g, ' ').trim();
+  if (!fa) throw new Error('translate_empty');
+  return fa;
+}
+
+export async function translateToPersian(env, text) {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!raw || !translatable(raw.slice(0, TR_TEXT_MAX))) return raw;
+  let key = '';
+  try { key = 'v2:news:tr:' + (await sha256Hex(raw.slice(0, TR_TEXT_MAX))); } catch { key = ''; }
+  if (key) {
+    const hit = await getJson(env, key);
+    if (hit && typeof hit.fa === 'string' && hit.fa) return hit.fa;
+  }
+  try {
+    const fa = await gtxFetch(raw.slice(0, TR_TEXT_MAX));
+    if (key && fa) await putJson(env, key, { fa, at: Date.now() }, { ttl: TR_TTL_SEC });
+    return fa || raw;
+  } catch {
+    return raw;
+  }
+}
 
 const fallbackWithCategory = (category) =>
   FALLBACK_NEWS.filter(n => n.category === category).map(n => ({ ...n, id: 'fb:' + n.id }));
@@ -195,9 +258,22 @@ const fallbackWithCategory = (category) =>
 export async function fetchLiveNews(env, category = 'breaking') {
   if (category === 'world') {
     const liveWorld = await aggregateWorldNews(env);
-    return (liveWorld.length
-      ? liveWorld.map(item => ({ ...item, category: 'world', region: 'world' }))
+    const top = (liveWorld.length
+      ? liveWorld.map(item => ({
+          ...item,
+          category: 'world',
+          region: 'world',
+          // Older caches may still carry the English outlet name.
+          source: persianSourceName(item),
+        }))
       : WORLD_FALLBACK_NEWS.map(n => ({ ...n, id: `fb:${n.id}`, category: 'world', region: 'world' }))).slice(0, 12);
+    // Everything the user sees in the world section must read in Persian:
+    // translate each headline and summary (cached, best-effort).
+    return Promise.all(top.map(async (item) => ({
+      ...item,
+      title: await translateToPersian(env, item.title),
+      summary: item.summary ? await translateToPersian(env, item.summary) : item.summary,
+    })));
   }
   const live = (await aggregateNews(env)).map(item => ({ ...item, category: classifyItem(item), region: 'iran' }));
   const mixed = category === 'breaking' || category === 'all';
