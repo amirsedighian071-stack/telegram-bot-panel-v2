@@ -10,7 +10,7 @@ import { getJson, putJson } from './kv.js';
 import { tgApi, resolveToken, sendToUser, beginMessageEdit, endMessageEdit } from './bot-api.js';
 export { tgApi, resolveToken, sendToUser } from './bot-api.js';
 import { membershipGate, sendMembershipLock, joinUrl } from './gate.js';
-import { PURPOSES, enabled, text as tr, assert } from './config.js';
+import { PURPOSES, enabled, text as tr, assert, str } from './config.js';
 import { entityKey, allEntities } from './storage.js';
 import { commerceMessage, commerceCallback, catalog, showProduct, showCart, myOrders, checkoutError, resumeMemberDeliveries, searchProducts } from './commerce.js';
 import { completeSignup, showPoints, progress } from './crm.js';
@@ -19,6 +19,7 @@ import { channelPost, relayMessage } from './automation.js';
 import { engagementCallback } from './engagement.js';
 import { ratesHome, ratesCallback } from './rates.js';
 import { newsHome, newsCallback } from './news.js';
+import { adminCallback, adminFlow, adminHome, isAdminUser } from './admin-bot.js';
 export { renderPollText, pollKeyboard, sendPollToChat, reactMarkup } from './engagement.js';
 
 const BOT_T = {
@@ -268,6 +269,7 @@ async function onMessage(env, msg, token, settings) {
   const menu = await getMenu(env);
   if (cmd === '/cancel' || cmd === '/end') { user.flow = null; user.supportOpen = false; await putUser(env, user); return sendToUser(token, chatId, T.supportClosed); }
   try {
+    if (await adminFlow(env, token, user, settings, lang, msg)) return;
     if (await serviceMessage(env, user, lang, msg)) return;
     if (!cmd && await commerceMessage(env, token, user, settings, lang, msg)) return;
     if (!cmd && user.flow?.type === 'feedback' && text && enabled(settings, 'broadcast')) {
@@ -289,17 +291,7 @@ async function onMessage(env, msg, token, settings) {
         case '/panel': {
           const isAdminUser = (settings.adminId && String(user.id) === String(settings.adminId)) || (env.ADMIN_ID && String(user.id) === String(env.ADMIN_ID));
           if (!isAdminUser) return sendToUser(token, chatId, tr('⛔ این بخش فقط برای ادمین ربات در دسترس است.', '⛔ This command is only available to the bot administrator.', lang));
-          const url = settings.publicBaseUrl || env.PUBLIC_BASE_URL || '';
-          const rows = [];
-          if (url) {
-            rows.push([{ text: '🚀 ' + tr('باز کردن پنل مدیریت (مینی‌اپ)', 'Open Admin Mini App', lang), web_app: { url } }]);
-          }
-          rows.push([
-            { text: '📊 ' + tr('آمار ربات', 'Bot Stats', lang), callback_data: 'admin:stats' },
-            { text: '📦 ' + tr('سفارش‌ها', 'Orders', lang), callback_data: 'admin:orders' },
-          ]);
-          rows.push([{ text: '🔙 ' + tr('بازگشت به منوی اصلی', 'Back to main menu', lang), callback_data: 'sub:root' }]);
-          return sendToUser(token, chatId, `🛠 <b>${tr('پنل مدیریت ربات (مینی‌اپ)', 'Bot Control Panel (Mini App)', lang)}</b>\n\n${tr('برای ورود به پنل تحت وب یا مدیریت بخش‌های مختلف، دکمه‌های زیر را انتخاب کنید:', 'Select an option below to manage the bot:', lang)}`, { reply_markup: { inline_keyboard: rows } });
+          return adminHome(env, token, chatId, settings, lang);
         }
         case '/rates':
         case '/price':
@@ -357,6 +349,11 @@ async function handleCallback(env, cb, token, settings) {
   const answer = (text = '', alert = false) => tgApi(token, 'answerCallbackQuery', { callback_query_id: cb.id, text, show_alert: alert });
   if (user.banned || !chatId) return answer();
   if (data.startsWith('chan:check:') && data.slice(11) !== String(user.id)) return answer(tr('این دکمه برای شما نیست.', 'This button belongs to another user.', lang), true);
+  // Admin controls run before the membership gate: the administrator must always
+  // be able to approve/reject relay publishing and manage the bot from Telegram.
+  if ((data.startsWith('adm:') || data.startsWith('rl:')) && Number(chatId) > 0) {
+    try { if (await adminCallback(env, cb, token, user, settings, lang, { answer })) return answer(); } catch (e) { return answer(str(e.message || 'error', 120), true); }
+  }
   try { if (await engagementCallback(env, token, user, settings, lang, cb)) return; } catch { return answer(tr('عملیات انجام نشد؛ دوباره تلاش کنید.', 'Please try again.', lang), true); }
   const gate = await membershipGate(env, token, user, settings);
   if (!gate.ok) { await sendMembershipLock(token, chatId, gate, lang, user.id); return answer(T.lockNo, true); }
@@ -415,8 +412,10 @@ async function handleCallback(env, cb, token, settings) {
       await sendToUser(token, chatId, txt, { reply_markup: { inline_keyboard: [[{ text: '🔙 ' + tr('بازگشت به منوی اصلی', 'Back to main menu', lang), callback_data: 'sub:root' }]] } });
       return answer();
     }
-    if (data.startsWith('sub:') && enabled(settings, 'menu')) { await showPage(token, chatId, messageId, menu, data.slice(4), lang, settings, user); return answer(); }
-    if (data.startsWith('txt:') && enabled(settings, 'menu')) { const [, src, r, c] = data.split(':'); const rows = src === 'root' ? menu.inlineButtons : menu.submenus?.[src]?.buttons || []; const btn = rows[+r]?.[+c]; return answer(btn?.type === 'text' ? String(btn.value).slice(0, 200) : '…', true); }
+    // Custom menu buttons belong to the customized menu, not to the optional
+    // "menu" module, so they keep working for every bot type/purpose.
+    if (data.startsWith('sub:')) { await showPage(token, chatId, messageId, menu, data.slice(4), lang, settings, user); return answer(); }
+    if (data.startsWith('txt:')) { const [, src, r, c] = data.split(':'); const rows = src === 'root' ? menu.inlineButtons : menu.submenus?.[src]?.buttons || []; const btn = rows[+r]?.[+c]; return answer(btn?.type === 'text' ? String(btn.value).slice(0, 200) : '…', true); }
     if (data === 'support:open' && enabled(settings, 'support')) { user.supportOpen = true; user.flow = null; await putUser(env, user); await sendToUser(token, chatId, T.supportIntro); return answer(); }
   } catch (e) { return answer(data.startsWith('vpn:') ? serviceError(e.message, lang) : checkoutError(e.message, lang), true); }
   return answer(tr('این بخش در نوع فعلی ربات فعال نیست.', 'This feature is disabled for this bot type.', lang), true);

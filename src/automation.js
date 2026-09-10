@@ -109,6 +109,7 @@ export async function relayMessage(env, token, msg, user, settings, lang) {
   if (groupKey) await putJson(env, entityKey('relayalbum', groupKey), entry.id, { ttl: 3600 });
   if (!msg.media_group_id) {
     if (!settings.relay.approval) await publishRelay(env, entry.id, settings.relay.destinations.map(d => d.chatId), false);
+    else await notifyRelayAdmin(env, entry);
     await sendToUser(token, user.id, settings.relay.approval ? tr('✅ پیام برای بررسی مدیر ثبت شد. هویت شما فقط در پنل مدیر دیده می‌شود؛ مقصد برچسب فوروارد دریافت نمی‌کند.', '✅ Submitted for review. The administrator can see your identity; recipients see no forward attribution.', lang) : tr('پیام پردازش شد؛ وضعیت ارسال در پنل ثبت شده است.', 'Message processed; delivery status is recorded in the panel.', lang));
   }
   return true;
@@ -137,6 +138,35 @@ export async function relayTick(env) {
     if (r.status === 'ready' && settings.relay.enabled && !settings.relay.approval && enabled(settings, 'relay')) { await publishRelay(env, r.id, settings.relay.destinations.map(d => d.chatId), false); continue; }
     if (r.status !== 'collecting' || r.readyAt > Date.now()) continue;
     r.status = settings.relay.approval ? 'pending' : 'ready'; await putJson(env, entityKey('relay', r.id), r);
+    if (settings.relay.approval && enabled(settings, 'relay')) await notifyRelayAdmin(env, r);
     if (!settings.relay.approval && settings.relay.enabled && enabled(settings, 'relay')) await publishRelay(env, r.id, settings.relay.destinations.map(d => d.chatId), false);
   }
+}
+
+/* After the bot receives a message/file for clean-copy publishing, it asks the
+ * administrator right inside Telegram: publish to the configured destinations
+ * (forward header removed via copyMessage), reject, or edit destinations. */
+export async function notifyRelayAdmin(env, r) {
+  const settings = await getSettings(env);
+  const adminId = settings.adminId || env.ADMIN_ID;
+  if (!adminId || !isChatId(adminId) || String(adminId) === String(r.userId)) return;
+  const token = await resolveToken(env);
+  if (!token) return;
+  const marker = entityKey('relaynotified', r.id);
+  if (await getJson(env, marker)) return;
+  await putJson(env, marker, { at: Date.now() }, { ttl: 7 * 86400 });
+  const destinations = (settings.relay.destinations || []).map(d => d.title || d.chatId).join('، ') || '— ثبت نشده';
+  await sendToUser(token, adminId,
+    `🪄 ${tr('پیام جدید برای انتشار بدون فوروارد', 'New message for clean-copy publishing', 'fa')}\n` +
+    `👤 ${r.userName || ''} (${r.userId})\n` +
+    `📝 ${(r.text || '—').slice(0, 300)}\n` +
+    `📎 ${(r.messageIds || []).length} ${'پیام'}\n` +
+    `📡 ${tr('مقصدهای ثبت‌شده', 'Configured destinations', 'fa')}: ${destinations}\n\n` +
+    tr('این پیام به کانال/گروه ارسال شود؟ (بدون برچسب فوروارد)', 'Publish this message to the channel/group? (no forward header)', 'fa'),
+    { reply_markup: { inline_keyboard: [[
+      { text: '✅ انتشار در مقصدها', callback_data: `rl:pub:${r.id}` },
+      { text: '❌ رد', callback_data: `rl:rej:${r.id}` },
+    ], [
+      { text: '📂 مدیریت حذف فوروارد', callback_data: 'adm:relay' },
+    ]] } });
 }
