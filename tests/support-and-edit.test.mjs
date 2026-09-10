@@ -101,12 +101,6 @@ test("mini app support rejects empty text and respects the support module switch
 
 test("tapping an inline button edits the open message instead of sending a new one", async () => {
   await h.settings({ botPurpose: "custom", customModules: ["menu", "faq"] });
-  // The default menu has no buttons; the admin adds one (submenu type) first.
-  const savedMenu = await h.api("PUT", "/menu", {
-    inlineButtons: [[{ text: "فروشگاه", type: "submenu", value: "shop" }]],
-    submenus: { shop: { title: "فروشگاه", text: "یکی را انتخاب کنید", buttons: [] } },
-  });
-  assert.equal(savedMenu.ok, true, JSON.stringify(savedMenu));
   await h.msg(70, "/start");
   tg.clear();
 

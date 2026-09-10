@@ -5,7 +5,6 @@ import { resolveToken, tgApi } from './bot-api.js';
 import { assert, id, str } from './config.js';
 import { entities, entityKey } from './storage.js';
 import { boundedBytes } from './network.js';
-import { readForm } from './body.js';
 
 export const MEDIA_LIMITS = { photo: 10 * 1024 * 1024, document: 20 * 1024 * 1024, video: 20 * 1024 * 1024, animation: 20 * 1024 * 1024, audio: 20 * 1024 * 1024 };
 const METHODS = { photo: 'sendPhoto', document: 'sendDocument', video: 'sendVideo', animation: 'sendAnimation', audio: 'sendAudio' };
@@ -47,7 +46,7 @@ r.post('/', async c => {
   assert((c.req.header('content-type') || '').startsWith('multipart/form-data'), 'multipart_required');
   const settings = await getSettings(c.env), token = await resolveToken(c.env);
   assert(token, 'token_missing'); assert(settings.uploads.chatId, 'upload_chat_required');
-  const form = await readForm(c);
+  const form = await c.req.raw.formData();
   let file = form.get('file');
   const kind = str(form.get('kind'), 16) || 'document';
   assert(METHODS[kind], 'invalid_media_kind');

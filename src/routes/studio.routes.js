@@ -8,7 +8,6 @@ import { validateGroup, GROUP_DEFAULTS, removeGroup, getGroup } from '../groups.
 import { validateFeed, publishRelay } from '../automation.js';
 import { fileResponse } from '../media.js';
 import { resolveToken, tgApi } from '../bot-api.js';
-import { readJson } from '../body.js';
 
 const r = new Hono(); r.use('*', requireAuth);
 const moduleGuard = name => async (c, next) => { assert(enabled(await getSettings(c.env), name), 'module_disabled', 403); await next(); };
@@ -25,8 +24,8 @@ r.get('/summary', async c => {
 });
 r.use('/products*', moduleGuard('catalog')); r.use('/categories*', moduleGuard('catalog'));
 r.get('/products', async c => result(c, page(c, recent(await allEntities(c.env, 'product')))));
-r.post('/products', async c => { const p = await validateProduct(c.env, await readJson(c)); await putJson(c.env, entityKey('product', p.id), p); return result(c, { product: p }); });
-r.put('/products/:id', async c => { const old = await getProduct(c.env, c.req.param('id')); assert(old, 'product_not_found', 404); const p = await validateProduct(c.env, await readJson(c), old); await putJson(c.env, entityKey('product', p.id), p); return result(c, { product: p }); });
+r.post('/products', async c => { const p = await validateProduct(c.env, await c.req.json()); await putJson(c.env, entityKey('product', p.id), p); return result(c, { product: p }); });
+r.put('/products/:id', async c => { const old = await getProduct(c.env, c.req.param('id')); assert(old, 'product_not_found', 404); const p = await validateProduct(c.env, await c.req.json(), old); await putJson(c.env, entityKey('product', p.id), p); return result(c, { product: p }); });
 r.delete('/products/:id', async c => {
   const p = await getProduct(c.env, c.req.param('id')); assert(p, 'product_not_found', 404);
   const used = (await allEntities(c.env, 'order')).some(o => o.items.some(i => i.id === p.id));
@@ -36,7 +35,7 @@ r.delete('/products/:id', async c => {
 });
 r.get('/categories', async c => result(c, { rows: (await allEntities(c.env, 'category')).sort((a, b) => (a.sort || 0) - (b.sort || 0)) }));
 for (const method of ['post', 'put']) r[method](method === 'post' ? '/categories' : '/categories/:id', async c => {
-  const body = await readJson(c), cid = c.req.param('id') || id();
+  const body = await c.req.json(), cid = c.req.param('id') || id();
   if (method === 'put') assert(await getJson(c.env, entityKey('category', cid)), 'category_not_found', 404);
   const category = { id: cid, title: str(body.title, 64), titleEn: str(body.titleEn, 64), hidden: !!body.hidden, sort: int(body.sort || 0, 0, 10000, 0) };
   assert(category.title, 'category_title_required'); await putJson(c.env, entityKey('category', cid), category); return result(c, { category });
@@ -47,11 +46,11 @@ r.use('/orders*', moduleGuard('shop'));
 r.get('/orders', async c => { let rows = recent(await allEntities(c.env, 'order')); if (c.req.query('status')) rows = rows.filter(o => o.status === c.req.query('status')); return result(c, page(c, rows)); });
 r.get('/orders/:id', async c => { const order = await getOrder(c.env, c.req.param('id')); assert(order, 'order_not_found', 404); return result(c, { order }); });
 r.get('/orders/:id/receipt', async c => { const o = await getOrder(c.env, c.req.param('id')); assert(o?.receipt?.fileId, 'receipt_not_found', 404); return fileResponse(await resolveToken(c.env), o.receipt.fileId, { inline: true, name: o.receipt.name }); });
-r.post('/orders/:id/:action', async c => result(c, { order: await updateOrder(c.env, c.req.param('id'), c.req.param('action'), await readJson(c)) }));
+r.post('/orders/:id/:action', async c => result(c, { order: await updateOrder(c.env, c.req.param('id'), c.req.param('action'), await c.req.json().catch(() => ({}))) }));
 r.use('/coupons*', moduleGuard('shop'));
 r.get('/coupons', async c => result(c, { rows: recent(await allEntities(c.env, 'coupon')) }));
 for (const method of ['post', 'put']) r[method](method === 'post' ? '/coupons' : '/coupons/:id', async c => {
-  const body = await readJson(c), cid = c.req.param('id') || id(), old = await getJson(c.env, entityKey('coupon', cid));
+  const body = await c.req.json(), cid = c.req.param('id') || id(), old = await getJson(c.env, entityKey('coupon', cid));
   if (method === 'put') assert(old, 'coupon_not_found', 404);
   const coupon = { id: cid, code: str(body.code, 32).toUpperCase(), type: body.type, value: int(body.value, 1, body.type === 'percent' ? 100 : 1000000000), startsAt: Number(body.startsAt) || 0, expiresAt: Number(body.expiresAt) || 0, maxUses: int(body.maxUses || 0, 0, 1000000), used: old?.used || 0, reserved: old?.reserved || 0, hidden: !!body.hidden, createdAt: old?.createdAt || Date.now() };
   assert(/^[A-Z0-9_-]{3,32}$/.test(coupon.code) && ['percent', 'amount'].includes(coupon.type) && coupon.value !== undefined && coupon.maxUses !== undefined, 'invalid_coupon');
@@ -63,8 +62,8 @@ r.delete('/coupons/:id', async c => { const coupon = await getJson(c.env, entity
 
 r.use('/groups*', moduleGuard('moderation'));
 r.get('/groups', async c => result(c, { rows: await allEntities(c.env, 'group'), defaults: GROUP_DEFAULTS }));
-r.post('/groups', async c => { const body = await readJson(c), old = await getGroup(c.env, body.chatId); assert(!old, 'group_already_exists'); const g = await validateGroup(c.env, body); await putJson(c.env, entityKey('group', g.chatId), g); return result(c, { group: g }); });
-r.put('/groups/:id', async c => { const old = await getGroup(c.env, c.req.param('id')); assert(old, 'group_not_found', 404); const body = await readJson(c); body.chatId = old.chatId; const g = await validateGroup(c.env, body, old); await putJson(c.env, entityKey('group', g.chatId), g); return result(c, { group: g }); });
+r.post('/groups', async c => { const body = await c.req.json(), old = await getGroup(c.env, body.chatId); assert(!old, 'group_already_exists'); const g = await validateGroup(c.env, body); await putJson(c.env, entityKey('group', g.chatId), g); return result(c, { group: g }); });
+r.put('/groups/:id', async c => { const old = await getGroup(c.env, c.req.param('id')); assert(old, 'group_not_found', 404); const body = await c.req.json(); body.chatId = old.chatId; const g = await validateGroup(c.env, body, old); await putJson(c.env, entityKey('group', g.chatId), g); return result(c, { group: g }); });
 r.delete('/groups/:id', async c => { await removeGroup(c.env, c.req.param('id')); return result(c, {}); });
 r.post('/groups/:id/check', async c => {
   const token = await resolveToken(c.env); assert(token, 'token_missing'); const me = await tgApi(token, 'getMe'); assert(me.ok, 'telegram_connection_failed');
@@ -77,7 +76,7 @@ r.post('/audit/:id/resolve', async c => { const k = entityKey('audit', c.req.par
 r.use('/feeds*', moduleGuard('channel'));
 r.get('/feeds', async c => result(c, { rows: recent(await allEntities(c.env, 'feed')), deletionErrors: await allEntities(c.env, 'deleteerror') }));
 for (const method of ['post', 'put']) r[method](method === 'post' ? '/feeds' : '/feeds/:id', async c => {
-  const body = await readJson(c), old = c.req.param('id') ? await getJson(c.env, entityKey('feed', c.req.param('id'))) : {};
+  const body = await c.req.json(), old = c.req.param('id') ? await getJson(c.env, entityKey('feed', c.req.param('id'))) : {};
   assert(old, 'feed_not_found', 404); const f = await validateFeed(c.env, body, old); await putJson(c.env, entityKey('feed', f.id), f); return result(c, { feed: f });
 });
 r.delete('/feeds/:id', async c => { await c.env.BOT_KV.delete(entityKey('feed', c.req.param('id'))); return result(c, {}); });
@@ -91,7 +90,7 @@ r.get('/relay/:id/attachment/:index', async c => {
   return fileResponse(await resolveToken(c.env), attachment.fileId, { inline: attachment.kind === 'photo', name: attachment.name });
 });
 r.get('/relay', async c => result(c, page(c, recent(await allEntities(c.env, 'relay')))));
-r.post('/relay/:id/approve', async c => { const b = await readJson(c); assert(Array.isArray(b.destinations), 'invalid_destinations'); return result(c, { relay: await publishRelay(c.env, c.req.param('id'), b.destinations) }); });
+r.post('/relay/:id/approve', async c => { const b = await c.req.json(); assert(Array.isArray(b.destinations), 'invalid_destinations'); return result(c, { relay: await publishRelay(c.env, c.req.param('id'), b.destinations) }); });
 r.post('/relay/:id/reject', async c => { const key = entityKey('relay', c.req.param('id')), entry = await getJson(c.env, key); assert(entry?.status === 'pending', 'relay_already_processed'); entry.status = 'rejected'; await putJson(c.env, key, entry); return result(c, {}); });
 
 r.use('/crm*', moduleGuard('crm'));
@@ -103,7 +102,7 @@ r.get('/crm', async c => {
 r.use('/faq*', moduleGuard('faq'));
 r.get('/faq', async c => result(c, { rows: recent(await allEntities(c.env, 'faq')) }));
 for (const method of ['post', 'put']) r[method](method === 'post' ? '/faq' : '/faq/:id', async c => {
-  const b = await readJson(c), fid = c.req.param('id') || id();
+  const b = await c.req.json(), fid = c.req.param('id') || id();
   if (method === 'put') assert(await getJson(c.env, entityKey('faq', fid)), 'faq_not_found', 404);
   const faq = { id: fid, question: str(b.question, 100), questionEn: str(b.questionEn, 100), answer: str(b.answer, 3500), answerEn: str(b.answerEn, 3500), hidden: !!b.hidden, createdAt: Date.now() };
   assert(faq.question && faq.answer, 'invalid_faq'); await putJson(c.env, entityKey('faq', fid), faq); return result(c, { faq });

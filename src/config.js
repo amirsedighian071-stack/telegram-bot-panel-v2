@@ -77,9 +77,6 @@ export function mergeV2Settings(s) {
 }
 
 export function patchV2Settings(s, body) {
-  // `in` on a primitive (and property access on null) throws a TypeError, which
-  // used to surface as HTTP 500 on every settings save with a malformed body.
-  if (!body || typeof body !== 'object') { const e = new Error('invalid_body'); e.status = 400; throw e; }
   if ('adminId' in body) {
     const aid = str(body.adminId, 32);
     assert(!aid || isChatId(aid) || /^\d+$/.test(aid), 'invalid_admin_id');

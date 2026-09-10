@@ -21,19 +21,39 @@ export const K = {
 
 export const DEFAULT_MENU = {
   welcome: {
-    fa: 'سلام {name} عزیز 👋\nبه ربات ما خوش آمدید!',
-    en: 'Hello {name} 👋\nWelcome to our bot!',
+    fa: 'سلام {name} عزیز 👋\nبه ربات ما خوش آمدید!\nاز دکمه‌های زیر استفاده کنید.',
+    en: 'Hello {name} 👋\nWelcome to our bot!\nUse the buttons below.',
   },
   help: {
     fa: '🤖 راهنمای ربات\n\n/start — شروع و نمایش منو\n/help — نمایش همین راهنما\n/lang — تغییر زبان\n/id — نمایش آیدی عددی شما\n/support — پیام به پشتیبانی\n/end — پایان گفتگو با پشتیبانی\n/ping — بررسی فعال بودن',
     en: '🤖 Bot Help\n\n/start — Start & show the menu\n/help — Show this help\n/lang — Change language\n/id — Show your numeric ID\n/support — Message the support team\n/end — End the support chat\n/ping — Check the bot is alive',
   },
   mainKeyboard: [['/start', '/help'], ['/lang', '/id'], ['/support']],
-  /* The default bot ships with NO inline buttons and NO submenus. Buttons only
-   * appear after the administrator explicitly adds them (text, type, value, row)
-   * from the panel menu builder or the in-Telegram /admin editor. */
-  inlineButtons: [],
-  submenus: {},
+  inlineButtons: [
+    [{ text: '🛍 فروشگاه | Shop', type: 'submenu', value: 'shop' }],
+    [{ text: '🌐 وب‌سایت | Website', type: 'url', value: 'https://example.com' }],
+    [{ text: '🌍 تغییر زبان | Language', type: 'callback', value: 'setlang:menu' }],
+    [{ text: '🛡 پشتیبانی | Support', type: 'callback', value: 'support:open' }],
+  ],
+  submenus: {
+    shop: {
+      title: '🛍 فروشگاه',
+      text: 'یکی از گزینه‌های زیر را انتخاب کنید:',
+      buttons: [
+        [{ text: '📄 لیست قیمت', type: 'text', value: 'لیست قیمت‌ها به‌زودی به‌روزرسانی می‌شود!\nبرای اطلاع از تخفیف‌ها در کانال عضو شوید.' }],
+        [{ text: '📱 پشتیبانی محصولات', type: 'submenu', value: 'shop_support' }],
+        [{ text: '🌐 سایت کامل', type: 'url', value: 'https://example.com' }],
+      ],
+    },
+    shop_support: {
+      title: '📱 پشتیبانی محصولات',
+      text: 'چه مشکلی دارید؟',
+      buttons: [
+        [{ text: '💬 گفتگو با پشتیبانی', type: 'callback', value: 'support:open' }],
+        [{ text: '⬅️ بازگشت به فروشگاه', type: 'submenu', value: 'shop' }],
+      ],
+    },
+  },
 };
 
 export const DEFAULT_SETTINGS = {
@@ -63,6 +83,7 @@ export async function del(env, key) {
   await env.BOT_KV.delete(key);
 }
 
+const deepClone = (v) => JSON.parse(JSON.stringify(v));
 
 export async function getSettings(env) {
   const s = (await getJson(env, K.SETTINGS, {})) || {};
@@ -102,12 +123,10 @@ export function withMenuDefaults(menu = {}) {
       fa: menu?.help?.fa ?? DEFAULT_MENU.help.fa,
       en: menu?.help?.en ?? DEFAULT_MENU.help.en,
     },
-    /* No demo buttons: an untouched menu stays button-less. Only buttons the
-     * administrator explicitly saved are ever shown to users. */
-    inlineButtons: Array.isArray(menu?.inlineButtons)
-      ? menu.inlineButtons.filter((r) => Array.isArray(r) && r.length)
-      : [],
-    submenus,
+    inlineButtons: Array.isArray(menu?.inlineButtons) && menu.inlineButtons.length
+      ? menu.inlineButtons
+      : deepClone(DEFAULT_MENU.inlineButtons),
+    submenus: Object.keys(submenus).length ? submenus : deepClone(DEFAULT_MENU.submenus),
   };
 }
 
@@ -206,13 +225,8 @@ export async function collectTargetIds(env, withinDays = 0) {
   return ids;
 }
 
-const DEFAULT_STATS = { users: 0, banned: 0, messages: 0, broadcasts: 0, sent: 0 };
-
-export const getStats = async (env) => {
-  const raw = await getJson(env, K.STATS, null);
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return { ...DEFAULT_STATS, ...raw };
-  return { ...DEFAULT_STATS };
-};
+export const getStats = (env) =>
+  getJson(env, K.STATS, { users: 0, banned: 0, messages: 0, broadcasts: 0, sent: 0 });
 
 export async function bumpStats(env, patch) {
   const s = await getStats(env);
@@ -222,15 +236,13 @@ export async function bumpStats(env, patch) {
 }
 
 export async function pushRecentUser(env, id) {
-  const raw = await getJson(env, K.RECENT_USERS, []);
-  const arr = Array.isArray(raw) ? raw : [];
+  const arr = (await getJson(env, K.RECENT_USERS, [])) || [];
   arr.unshift(String(id));
   await putJson(env, K.RECENT_USERS, [...new Set(arr)].slice(0, 10));
 }
 
 export async function getRecentUsers(env) {
-  const raw = await getJson(env, K.RECENT_USERS, []);
-  const ids = Array.isArray(raw) ? raw : [];
+  const ids = (await getJson(env, K.RECENT_USERS, [])) || [];
   const users = await Promise.all(ids.map((id) => getUser(env, id)));
   return users.filter(Boolean).map((u) => ({
     id: u.id, firstName: u.firstName || '', username: u.username || '',
@@ -239,15 +251,13 @@ export async function getRecentUsers(env) {
 }
 
 export async function pushBroadcastId(env, id) {
-  const raw = await getJson(env, K.BROADCAST_INDEX, []);
-  const arr = Array.isArray(raw) ? raw : [];
+  const arr = (await getJson(env, K.BROADCAST_INDEX, [])) || [];
   arr.unshift(id);
   await putJson(env, K.BROADCAST_INDEX, [...new Set(arr)].slice(0, 20));
 }
 
 export async function getRecentBroadcasts(env) {
-  const raw = await getJson(env, K.BROADCAST_INDEX, []);
-  const ids = Array.isArray(raw) ? raw : [];
+  const ids = (await getJson(env, K.BROADCAST_INDEX, [])) || [];
   const jobs = await Promise.all(ids.map((id) => getJson(env, K.BROADCAST(id))));
   return jobs
     .filter(Boolean)
@@ -267,15 +277,13 @@ export const getPost = (env, id) => getJson(env, K.POST(id));
 export const putPost = (env, post) => putJson(env, K.POST(post.id), post);
 
 export async function pushEngIndex(env, type, id) {
-  const raw = await getJson(env, K.ENG_INDEX, []);
-  const arr = Array.isArray(raw) ? raw : [];
+  const arr = (await getJson(env, K.ENG_INDEX, [])) || [];
   arr.unshift({ t: type, id, at: Date.now() });
   await putJson(env, K.ENG_INDEX, arr.slice(0, 50));
 }
 
 export async function getEngagementLists(env) {
-  const raw = await getJson(env, K.ENG_INDEX, []);
-  const idx = Array.isArray(raw) ? raw : [];
+  const idx = (await getJson(env, K.ENG_INDEX, [])) || [];
   const polls = [], posts = [];
   for (const e of idx) {
     if (e.t === 'poll' && polls.length < 20) {

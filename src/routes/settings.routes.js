@@ -3,7 +3,6 @@ import { requireAuth } from '../auth.js';
 import { getSettings, saveSettings } from '../kv.js';
 import { resolveToken, tgApi } from '../bot-api.js';
 import { patchV2Settings, PURPOSES, activeModules, assert } from '../config.js';
-import { readJson } from '../body.js';
 
 const r = new Hono();
 r.use('*', requireAuth);
@@ -43,7 +42,7 @@ r.get('/', async (c) => {
 
 r.put('/', async (c) => {
   const env = c.env;
-  const body = await readJson(c);
+  const body = await c.req.json().catch(() => ({}));
   const settings = await getSettings(env);
 
   if (typeof body.botToken === 'string' && body.botToken.trim()) {
@@ -90,7 +89,7 @@ r.put('/', async (c) => {
 
 r.post('/webhook', async (c) => {
   const env = c.env;
-  const body = await readJson(c);
+  const body = await c.req.json().catch(() => ({}));
   const action = body.action === 'delete' ? 'delete' : 'set';
 
   const token = await resolveToken(env);

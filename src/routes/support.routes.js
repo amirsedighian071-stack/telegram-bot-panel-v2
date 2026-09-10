@@ -5,7 +5,6 @@ import {
   getTicket, getTicketsList, markTicketRead, ticketAppendAdmin, closeTicket, getUser,
 } from '../kv.js';
 import { resolveToken, sendToUser } from '../telegram.js';
-import { readJson } from '../body.js';
 
 const r = new Hono();
 r.use('*', requireAuth);
@@ -34,7 +33,7 @@ r.get('/tickets/:id', async (c) => {
 r.post('/tickets/:id/reply', async (c) => {
   const env = c.env;
   const id = c.req.param('id');
-  const body = await readJson(c);
+  const body = await c.req.json().catch(() => ({}));
   const text = String(body.text || '').trim();
   if (!text || text.length > 3000) return fail(c, 'invalid_text');
 
