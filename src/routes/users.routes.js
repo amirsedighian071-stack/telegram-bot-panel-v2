@@ -3,7 +3,6 @@ import { Hono } from 'hono';
 import { requireAuth } from '../auth.js';
 import { getUser, putUser, listUsersPage, searchUsers, bumpStats } from '../kv.js';
 import { resolveToken, sendToUser } from '../telegram.js';
-import { readJson } from '../body.js';
 
 const r = new Hono();
 r.use('*', requireAuth);
@@ -30,7 +29,7 @@ r.get('/:id', async (c) => {
 });
 
 r.post('/:id/ban', async (c) => {
-  const body = await readJson(c);
+  const body = await c.req.json().catch(() => ({}));
   const user = await getUser(c.env, c.req.param('id'));
   if (!user) return fail(c, 'user_not_found', 404);
 
@@ -59,7 +58,7 @@ r.post('/:id/unban', async (c) => {
 });
 
 r.post('/:id/message', async (c) => {
-  const body = await readJson(c);
+  const body = await c.req.json().catch(() => ({}));
   const text = String(body.text || '').trim();
   if (!text || text.length > 4096) return fail(c, 'invalid_text');
 

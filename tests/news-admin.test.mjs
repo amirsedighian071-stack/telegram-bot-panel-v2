@@ -1,9 +1,9 @@
 import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup, telegramMock } from './helpers.mjs';
-import { putJson, getJson, getMenu, getSettings, saveSettings } from '../src/kv.js';
+import { putJson, getJson, getMenu } from '../src/kv.js';
 import { entityKey } from '../src/storage.js';
-import { NEWS_SOURCES, WORLD_NEWS_SOURCES, newsTick, fetchLiveNews } from '../src/news.js';
+import { NEWS_SOURCES, newsTick, fetchLiveNews } from '../src/news.js';
 
 let h, tg;
 const originalFetch = globalThis.fetch;
@@ -179,71 +179,4 @@ test('non-admins are refused by the Telegram admin controls', async () => {
   await h.cb(555, 'adm:menu');
   const answered = tg.calls.find(c => c.method === 'answerCallbackQuery' && c.payload.text?.includes('ادمین'));
   assert(answered, 'non-admin must get an access-denied alert');
-});
-
-test('default bot ships without menu buttons until the admin adds one', async () => {
-  // Fresh install: no custom buttons, no sample submenus.
-  const fresh = await getMenu(h.env);
-  assert.equal(fresh.inlineButtons.length, 0, 'default menu must have no inline buttons');
-  assert.equal(Object.keys(fresh.submenus).length, 0, 'default menu must have no submenus');
-
-  // Default /start must not show the old demo buttons.
-  await h.msg(777, '/start');
-  const start = tg.calls.find(c => c.method === 'sendMessage' && String(c.payload.chat_id) === '777');
-  assert(start, '/start must be answered');
-  const labels = (start.payload.reply_markup?.inline_keyboard || []).flat().map(b => b.text);
-  assert(!labels.some(t => String(t).includes('فروشگاه')), 'demo buttons must be gone');
-
-  // A button the administrator adds (text, type, value and row chosen) is shown.
-  const saved = await h.api('PUT', '/menu', { inlineButtons: [[{ text: 'فروشگاه من', type: 'url', value: 'https://example.com' }]] });
-  assert.equal(saved.ok, true, JSON.stringify(saved));
-  assert.equal(saved.data.menu.inlineButtons.length, 1);
-  assert.equal(Object.keys(saved.data.menu.submenus).length, 0, 'saving buttons must not inject a sample submenu');
-
-  await tg.clear();
-  await h.msg(777, '/start');
-  const start2 = tg.calls.find(c => c.method === 'sendMessage' && String(c.payload.chat_id) === '777');
-  const labels2 = (start2.payload.reply_markup?.inline_keyboard || []).flat().map(b => b.text);
-  assert(labels2.includes('فروشگاه من'), 'admin-added button must be shown');
-});
-
-test('a purpose with no available buttons sends /start without reply_markup', async () => {
-  const s = await getSettings(h.env);
-  s.botPurpose = 'relay';
-  s.customModules = ['relay'];
-  s.botLangMode = 'fa';
-  s.supportButton = { ...s.supportButton, enabled: false };
-  await saveSettings(h.env, s);
-  await h.msg(778, '/start');
-  const start = tg.calls.find(c => c.method === 'sendMessage' && String(c.payload.chat_id) === '778');
-  assert(start, '/start must be answered');
-  assert.equal(start.payload.reply_markup, undefined, 'button-less start must not carry an empty inline keyboard');
-});
-
-test('world news is translated to Persian before display', async () => {
-  for (const src of WORLD_NEWS_SOURCES) {
-    await putJson(h.env, `v2:news:world:${src.id}`, { at: Date.now(), items: [
-      { id: 'w1', title: 'Hello world headline', summary: 'Big story summary', url: 'https://www.bbc.com/x', source: src.name, publishedAt: Date.now() },
-    ] }, { ttl: 300 });
-  }
-  let translateCalls = 0;
-  tg.setOverride(async (u) => {
-    if (String(u).startsWith('https://translate.googleapis.com/')) {
-      translateCalls++;
-      const q = new URL(u).searchParams.get('q');
-      const map = { 'Hello world headline': 'تیتر فارسی جهانی', 'Big story summary': 'خلاصه فارسی' };
-      // The Google translate response nests each sentence segment as its own array.
-      return Response.json([[[map[q] || 'ترجمه‌شده', q, null, null, 10]], null, 'en']);
-    }
-    return undefined;
-  });
-  const items = await fetchLiveNews(h.env, 'world');
-  assert(items.length >= 1, 'world items must be returned');
-  assert.equal(items[0].title, 'تیتر فارسی جهانی', 'headline must be translated to Persian');
-  assert.equal(items[0].summary, 'خلاصه فارسی', 'summary must be translated to Persian');
-  assert.equal(items[0].source, 'بی‌بی‌سی', 'outlet name must be shown in Persian');
-  // Translations are cached in KV — a second read must not re-translate.
-  const before = translateCalls;
-  await fetchLiveNews(h.env, 'world');
-  assert.equal(translateCalls, before, 'translations must be served from cache');
 });

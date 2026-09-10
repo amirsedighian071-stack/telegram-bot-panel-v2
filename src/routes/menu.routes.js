@@ -3,7 +3,6 @@ import { Hono } from 'hono';
 import { requireAuth } from '../auth.js';
 import { DEFAULT_MENU, getMenu, saveMenu, getSettings } from '../kv.js';
 import { resolveToken, sendStart } from '../telegram.js';
-import { readJson } from '../body.js';
 
 const r = new Hono();
 r.use('*', requireAuth);
@@ -55,8 +54,6 @@ function sanitizeMenu(input = {}) {
     en: clean(input?.help?.en, 3500) || DEFAULT_MENU.help.en,
   };
 
-  /* Default mode stays button-less: whatever the administrator saved is kept as-is
-   * (even when empty). No demo buttons or sample submenus are injected here. */
   const inlineButtons = sanitizeButtons(input?.inlineButtons, validSubIds, { maxRows: 10 });
   const submenus = {};
   for (const id of validSubIds) {
@@ -65,9 +62,12 @@ function sanitizeMenu(input = {}) {
     submenus[id] = {
       title: clean(sm.title, 64),
       text: clean(sm.text, 3500),
-      buttons,
+      buttons: buttons.length ? buttons : [[{ text: '…', type: 'text', value: '…' }]],
     };
   }
+
+  if (!inlineButtons.length) inlineButtons.push(...JSON.parse(JSON.stringify(DEFAULT_MENU.inlineButtons)));
+  if (!Object.keys(submenus).length) submenus.shop = JSON.parse(JSON.stringify(DEFAULT_MENU.submenus.shop));
 
   return { welcome, help, inlineButtons, submenus };
 }
@@ -77,14 +77,14 @@ r.get('/', async (c) =>
 );
 
 r.put('/', async (c) => {
-  const body = await readJson(c);
+  const body = await c.req.json().catch(() => ({}));
   const menu = sanitizeMenu(body);
   await saveMenu(c.env, menu);
   return c.json({ ok: true, data: { menu } });
 });
 
 r.post('/preview', async (c) => {
-  const body = await readJson(c);
+  const body = await c.req.json().catch(() => ({}));
   const chatId = Number(body.chatId);
   if (!Number.isInteger(chatId) || chatId <= 0) return fail(c, 'invalid_chat_id');
 

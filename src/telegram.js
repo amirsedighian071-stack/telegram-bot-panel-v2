@@ -118,9 +118,6 @@ export function pageMarkup(rows, { withBack = false, T = BOT_T.fa } = {}) {
     })
   );
   if (withBack) kb.push([{ text: T.back, callback_data: 'sub:root' }]);
-  // Telegram rejects an empty inline keyboard; a button-less screen simply sends
-  // no reply_markup at all (the default menu has zero buttons until the admin adds some).
-  if (!kb.length) return undefined;
   return { inline_keyboard: kb };
 }
 
@@ -208,12 +205,10 @@ function systemRows(settings, lang) {
 
 export async function sendStart(token, chatId, user, menu, lang, settings) {
   const purpose = PURPOSES[settings.botPurpose] || PURPOSES.custom;
-  const markup = inlineMarkup(menu, settings, lang, user);
-  const hasButtons = !!(markup && markup.inline_keyboard.length);
-  let welcome = settings.botPurpose === 'custom' || menu.customized ? renderTpl(menu.welcome[lang] || menu.welcome.fa, user) : `${tr('سلام', 'Hello', lang)} ${user.firstName || ''} 👋\n${lang === 'en' ? purpose.en : purpose.fa}${hasButtons ? '\n' + tr('از گزینه‌های زیر استفاده کنید.', 'Choose an option below.', lang) : ''}`;
+  let welcome = settings.botPurpose === 'custom' || menu.customized ? renderTpl(menu.welcome[lang] || menu.welcome.fa, user) : `${tr('سلام', 'Hello', lang)} ${user.firstName || ''} 👋\n${lang === 'en' ? purpose.en : purpose.fa}\n${tr('از گزینه‌های زیر استفاده کنید.', 'Choose an option below.', lang)}`;
   if (settings.botPurpose === 'relay') welcome += '\n\n' + tr('پیام یا فایل خود را بفرستید تا طبق تنظیم مدیر، بدون برچسب فوروارد کپی شود. هویت فرستنده نزد مدیر قابل مشاهده است.', 'Send a message or file to copy it without forward attribution, as configured by the administrator. The administrator can see the sender’s identity.', lang);
   if (settings.botPurpose === 'group') welcome += '\n\n' + tr('ربات را ادمین گروه کنید و گروه را در پنل ثبت و فعال کنید. /id شناسه شما را نشان می‌دهد.', 'Add the bot as a group administrator, then register and enable the group in the panel. /id shows your ID.', lang);
-  return sendToUser(token, chatId, welcome, { ...(markup ? { reply_markup: markup } : {}), disable_web_page_preview: true });
+  return sendToUser(token, chatId, welcome, { reply_markup: inlineMarkup(menu, settings, lang, user), disable_web_page_preview: true });
 }
 
 function langKeyboard() {
