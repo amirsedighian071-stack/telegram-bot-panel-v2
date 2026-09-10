@@ -446,10 +446,14 @@
     try {
       const t0 = Date.now();
       const r = await fetch('/api/health', { cache: 'no-store' });
-      const j = await r.json();
-      S.live = { state: 'ok', ms: Date.now() - t0, colo: (j.data && j.data.colo) || null, at: Date.now() };
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) {
+        S.live = { state: 'down', ms: null, colo: null, at: Date.now(), error: j.error || ('HTTP ' + r.status) };
+      } else {
+        S.live = { state: 'ok', ms: Date.now() - t0, colo: (j.data && j.data.colo) || null, at: Date.now() };
+      }
     } catch (e) {
-      S.live = { state: 'down', ms: null, colo: null, at: Date.now() };
+      S.live = { state: 'down', ms: null, colo: null, at: Date.now(), error: e.message };
     }
     paintLive();
   }
