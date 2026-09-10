@@ -3,6 +3,7 @@ import { requireAuth } from './auth.js';
 import { K, getJson, putJson, getSettings, bumpStats, getUser, putUser, collectTargetIds, pushBroadcastId, pushEngIndex, getRecentBroadcasts } from './kv.js';
 import { entityKey, allEntities } from './storage.js';
 import { assert, id, int, str, isChatId, urlButtons, enabled } from './config.js';
+import { readJson, requireObject } from './body.js';
 import { tgApi, sendToUser, resolveToken } from './bot-api.js';
 import { getMedia, sendMedia, checkBotMedia } from './media.js';
 import { sendPollToChat, reactMarkup } from './engagement.js';
@@ -70,6 +71,7 @@ async function targetsFor(env, body) {
   ids = [...new Set(ids || [])]; assert(ids.length, 'no_targets'); assert(ids.length <= 20000, 'broadcast_target_limit'); return ids;
 }
 export async function createBroadcast(env, body) {
+  requireObject(body);
   const token = await resolveToken(env); assert(token, 'token_missing');
   const settings = await getSettings(env); assert(enabled(settings, 'broadcast'), 'module_disabled', 403);
   if (body.target === 'purchased') assert(enabled(settings, 'shop'), 'module_disabled', 403);
@@ -147,7 +149,7 @@ export async function broadcastTick(env) {
   }
 }
 const r = new Hono(); r.use('*', requireAuth);
-r.post('/', async c => c.json({ ok: true, data: await createBroadcast(c.env, await c.req.json()) }));
+r.post('/', async c => c.json({ ok: true, data: await createBroadcast(c.env, await readJson(c)) }));
 r.get('/', async c => { const all = await broadcastJobs(c.env); return c.json({ ok: true, data: { jobs: all.sort((a, b) => b.createdAt - a.createdAt).slice(0, 100).map(jobView) } }); });
 r.get('/:id', async c => { const j = await getJson(c.env, K.BROADCAST(c.req.param('id'))); assert(j, 'not_found', 404); return c.json({ ok: true, data: { job: jobView(j) } }); });
 r.post('/:id/tick', async c => c.json({ ok: true, data: { job: jobView(await tickBroadcast(c.env, c.req.param('id'))) } }));

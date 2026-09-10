@@ -3,6 +3,7 @@ import { requireAuth } from '../auth.js';
 import { getSettings, saveSettings, getJson } from '../kv.js';
 import { patchV2Settings, enabled, assert } from '../config.js';
 import { NEWS_CATEGORIES, NEWS_CATEGORY_KEYS, NEWS_SEND_CATS, fetchLiveNews, sendNewsDigest, newsDestinations } from '../news.js';
+import { readJson } from '../body.js';
 
 const r = new Hono();
 r.use('*', requireAuth);
@@ -26,7 +27,7 @@ r.get('/', async (c) => {
 r.put('/settings', async (c) => {
   const settings = await getSettings(c.env);
   assert(enabled(settings, 'channel') || settings.botPurpose === 'news', 'module_disabled', 403);
-  patchV2Settings(settings, { news: await c.req.json().catch(() => ({})) });
+  patchV2Settings(settings, { news: await readJson(c) });
   await saveSettings(c.env, settings);
   return result(c, { news: settings.news });
 });
@@ -44,7 +45,7 @@ r.get('/latest', async (c) => {
 r.post('/send', async (c) => {
   const settings = await getSettings(c.env);
   assert(enabled(settings, 'channel') || settings.botPurpose === 'news', 'module_disabled', 403);
-  const body = await c.req.json().catch(() => ({}));
+  const body = await readJson(c);
   const category = NEWS_CATEGORY_KEYS.includes(body.category) ? body.category : 'all';
   const destinations = await newsDestinations(c.env, Array.isArray(body.destinations) ? body.destinations : []);
   assert(destinations.length, 'invalid_destinations');

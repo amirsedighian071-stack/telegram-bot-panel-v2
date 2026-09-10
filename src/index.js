@@ -45,7 +45,7 @@ api.get('/health', c => c.json({ ok: true, data: { ts: Date.now(), version: c.en
 api.notFound(c => c.json({ ok: false, error: 'not_found' }, 404));
 api.onError((err, c) => {
   if (err.status) return c.json({ ok: false, error: err.message }, err.status);
-  console.error('[api] request failed', err.name);
+  console.error('[api] request failed', c.req.method, c.req.path, err.name, String(err.message).slice(0, 200));
   return c.json({ ok: false, error: 'internal_error' }, 500);
 });
 
@@ -75,10 +75,26 @@ async function detachedRequest(request) {
   const body = await request.arrayBuffer();
   return new Request(request, oversized ? { body: null } : { body });
 }
+const serverError = (label, error, status = 500) => {
+  console.error('[worker] ' + label + ' failed', error?.name, String(error?.message).slice(0, 200));
+  const httpStatus = Number.isInteger(error?.status) ? Math.min(599, Math.max(400, error.status)) : status;
+  // Only the API's own snake_case codes are safe to echo back; anything else is a
+  // JavaScript exception message and must not leak to the client.
+  const code = /^[a-z0-9_]+$/.test(String(error?.message || '')) ? error.message : 'internal_error';
+  return Response.json({ ok: false, error: code }, { status: httpStatus });
+};
+// Wraps the public (non-Hono) entry points: payment callbacks, subscription links,
+// creator webhooks and the Telegram webhook all live outside api.onError.
+// NOTE: this must be a plain call on the stub. Adding a method to BotCoordinator and
+// invoking it through the stub would need Durable Object RPC, which workerd refuses
+// unless the class `extends DurableObject` — that turns every request into a 500.
+async function guarded(label, fn) {
+  try { return await fn(); } catch (error) { return serverError(label, error); }
+}
 async function dispatch(request, env, ctx) {
   const { pathname } = new URL(request.url);
-  if (pathname.startsWith('/cr-hook/')) return creatorHook(env, request, pathname.slice('/cr-hook/'.length));
-  if (pathname.startsWith('/cr-relay/')) return creatorRelay(env, request, pathname.slice('/cr-relay/'.length));
+  if (pathname.startsWith('/cr-hook/')) return guarded('cr-hook', () => creatorHook(env, request, pathname.slice('/cr-hook/'.length)));
+  if (pathname.startsWith('/cr-relay/')) return guarded('cr-relay', () => creatorRelay(env, request, pathname.slice('/cr-relay/'.length)));
   if (pathname.startsWith('/bots/')) { try { return await managedPublic(request, env); } catch (error) { return Response.json({ok:false,error:error.status?error.message:'managed_request_failed'},{status:error.status||500}); } }
   if (pathname === '/internal/tick') { await runScheduled(env); return Response.json({ ok: true }); }
   if (pathname === '/telegram/webhook') {
@@ -92,10 +108,10 @@ async function dispatch(request, env, ctx) {
     try { await handleUpdate(env, update); } catch (e) { console.error('[webhook] processing failed', e.name); return Response.json({ ok: false }, { status: 500 }); }
     return Response.json({ ok: true });
   }
-  if (pathname.startsWith('/service-pay/')) return handleServicePayment(request, env);
-  if (pathname.startsWith('/sub-all/')) return combinedSubscription(request, env);
-  if (pathname.startsWith('/sub/')) return subscription(request, env);
-  if (pathname.startsWith('/pay/')) return handlePayment(request, env);
+  if (pathname.startsWith('/service-pay/')) return guarded('service-pay', () => handleServicePayment(request, env));
+  if (pathname.startsWith('/sub-all/')) return guarded('sub-all', () => combinedSubscription(request, env));
+  if (pathname.startsWith('/sub/')) return guarded('sub', () => subscription(request, env));
+  if (pathname.startsWith('/pay/')) return guarded('pay', () => handlePayment(request, env));
   return api.fetch(request, env, ctx);
 }
 
@@ -181,27 +197,32 @@ export class BotCoordinator {
 function stub(env) { return env.BOT_STATE.get(env.BOT_STATE.idFromName('telegram-bot-panel-v2')); }
 export default {
   async fetch(request, env, ctx) {
-    const path = new URL(request.url).pathname;
-    if (/^\/bots\/[a-f0-9]{16}\/portal\/?$/.test(path) && request.method === 'GET') {
-      const assetURL = new URL('/portal/', request.url);
-      return env.ASSETS ? env.ASSETS.fetch(new Request(assetURL, request)) : new Response('Not Found', {status:404});
-    }
-    if (path.startsWith('/internal/')) return new Response('Not Found', { status: 404 });
-    if (path === '/telegram/webhook') {
-      if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
-      const secret = request.headers.get('x-telegram-bot-api-secret-token') || '';
-      if (!env.WEBHOOK_SECRET || !await safeEqual(secret, env.WEBHOOK_SECRET)) return Response.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-      if (Number(request.headers.get('content-length') || 0) > 1024 * 1024) return new Response('Too large', { status: 413 });
-    }
-    if (path.startsWith('/api/') || path === '/telegram/webhook' || path.startsWith('/pay/') || path.startsWith('/service-pay/') || path.startsWith('/sub/') || path.startsWith('/sub-all/') || path.startsWith('/bots/') || path.startsWith('/cr-hook/') || path.startsWith('/cr-relay/')) {
-      if (env.BOT_STATE) return stub(env).fetch(request);
-      if (env.TEST_MODE) return dispatch(request, env, ctx);
-      return Response.json({ ok: false, error: 'durable_object_binding_required' }, { status: 503 });
-    }
-    return env.ASSETS && request.method === 'GET' ? env.ASSETS.fetch(request) : new Response('Not Found', { status: 404 });
+    try { return await routeRequest(request, env, ctx); } catch (error) { return serverError('worker:' + new URL(request.url).pathname, error); }
   },
   async scheduled(event, env, ctx) {
-    if (env.BOT_STATE) ctx.waitUntil(stub(env).fetch(new Request('https://internal/internal/tick', { method: 'POST' })));
-    else if (env.TEST_MODE) ctx.waitUntil(runScheduled(env));
+    try {
+      if (env.BOT_STATE) ctx.waitUntil(guarded('coordinator:tick', () => stub(env).fetch(new Request('https://internal/internal/tick', { method: 'POST' }))));
+      else if (env.TEST_MODE) ctx.waitUntil(runScheduled(env));
+    } catch (error) { serverError('scheduled', error); }
   },
 };
+async function routeRequest(request, env, ctx) {
+  const path = new URL(request.url).pathname;
+  if (/^\/bots\/[a-f0-9]{16}\/portal\/?$/.test(path) && request.method === 'GET') {
+    const assetURL = new URL('/portal/', request.url);
+    return env.ASSETS ? env.ASSETS.fetch(new Request(assetURL, request)) : new Response('Not Found', {status:404});
+  }
+  if (path.startsWith('/internal/')) return new Response('Not Found', { status: 404 });
+  if (path === '/telegram/webhook') {
+    if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+    const secret = request.headers.get('x-telegram-bot-api-secret-token') || '';
+    if (!env.WEBHOOK_SECRET || !await safeEqual(secret, env.WEBHOOK_SECRET)) return Response.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+    if (Number(request.headers.get('content-length') || 0) > 1024 * 1024) return new Response('Too large', { status: 413 });
+  }
+  if (path.startsWith('/api/') || path === '/telegram/webhook' || path.startsWith('/pay/') || path.startsWith('/service-pay/') || path.startsWith('/sub/') || path.startsWith('/sub-all/') || path.startsWith('/bots/') || path.startsWith('/cr-hook/') || path.startsWith('/cr-relay/')) {
+    if (env.BOT_STATE) return guarded('coordinator:' + path, () => stub(env).fetch(request));
+    if (env.TEST_MODE) return dispatch(request, env, ctx);
+    return Response.json({ ok: false, error: 'durable_object_binding_required' }, { status: 503 });
+  }
+  return env.ASSETS && request.method === 'GET' ? env.ASSETS.fetch(request) : new Response('Not Found', { status: 404 });
+}

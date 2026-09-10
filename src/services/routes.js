@@ -92,9 +92,10 @@ import {
   exportBackup,
   restoreBackup,
 } from "./reports.js";
+import { readJson, readForm } from "../body.js";
 
 const result = (c, data) => c.json({ ok: true, data });
-const body = (c) => c.req.json().catch(() => ({}));
+const body = (c) => readJson(c);
 function paged(c, rows) {
   const offset = integer(c.req.query("offset") || 0, 0, 10000000),
     limit = integer(c.req.query("limit") || 50, 1, 500);
@@ -378,11 +379,14 @@ admin.get("/operations", async (c) =>
     paged(c, recent(await list(c.env, "operation")).map(operationView)),
   ),
 );
-admin.post("/operations/:id/run", async (c) =>
-  result(c, {
-    operation: operationView(await processOperation(c.env, c.req.param("id"))),
-  }),
-);
+admin.post("/operations/:id/run", async (c) => {
+  // processOperation hands back null for an id that no longer exists (an operation
+  // that expired or was released while the panel was open). Passing that to
+  // operationView used to throw a TypeError and answer HTTP 500.
+  const operation = await processOperation(c.env, c.req.param("id"));
+  assert(operation, "operation_not_found", 404);
+  return result(c, { operation: operationView(operation) });
+});
 admin.post("/operations/:id/reconcile", async (c) =>
   result(c, { operation: await reconcileOperation(c.env, c.req.param("id")) }),
 );
@@ -752,7 +756,7 @@ portal.post("/operations/:id/cancel", async (c) =>
 portal.post("/combined-subscription", async (c) => {
   const userId = String(c.get("customer").id),
     old = await get(c.env, "sub-owner", userId),
-    body = await c.req.json().catch(() => ({}));
+    body = await readJson(c);
   let token = old?.token;
   if (!token || body.rotate) {
     token = randomToken();
@@ -850,7 +854,11 @@ portal.post("/payments/:id/receipt", async (c) => {
       p.type === "manual",
     "receipt_not_allowed",
   );
-  const form = await c.req.raw.formData(),
+  assert(
+    (c.req.header("content-type") || "").startsWith("multipart/form-data"),
+    "multipart_required",
+  );
+  const form = await readForm(c),
     file = form.get("file");
   assert(
     file &&

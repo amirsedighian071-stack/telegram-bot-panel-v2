@@ -18,6 +18,7 @@ import {
 import { getSettings } from "../kv.js";
 import { resolveToken } from "../bot-api.js";
 import { validateInitData } from "../services/customer-auth.js";
+import { readJson } from "../body.js";
 
 const r = new Hono();
 
@@ -30,9 +31,11 @@ r.post("/login", async (c) => {
     return c.json({ ok: false, error: "rate_limited" }, 429);
   }
 
+  // A malformed or missing body is not a server fault: treat it as "no password"
+  // so the caller gets the normal 401 instead of an unhandled 500.
   let password = "";
   try {
-    ({ password = "" } = await c.req.json());
+    ({ password = "" } = await readJson(c));
   } catch {}
 
   if (String(password).length > 256)
@@ -57,7 +60,7 @@ r.post("/telegram-admin", async (c) => {
   const rl = await loginAllowed(env, ip);
   if (!rl.allowed) return c.json({ ok: false, error: "rate_limited" }, 429);
 
-  const body = await c.req.json().catch(() => ({}));
+  const body = await readJson(c);
   const initData = String(body.initData || "");
   if (!initData) return c.json({ ok: false, error: "init_data_required" }, 400);
 
@@ -122,7 +125,7 @@ r.post("/logout", requireAuth, async (c) => {
 
 r.post("/change-password", requireAuth, async (c) => {
   const env = c.env;
-  const body = await c.req.json().catch(() => ({}));
+  const body = await readJson(c);
   const currentPassword = String(body.currentPassword || "");
   const newPassword = String(body.newPassword || "");
 
