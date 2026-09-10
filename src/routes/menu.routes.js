@@ -54,6 +54,8 @@ function sanitizeMenu(input = {}) {
     en: clean(input?.help?.en, 3500) || DEFAULT_MENU.help.en,
   };
 
+  /* Default mode stays button-less: whatever the administrator saved is kept as-is
+   * (even when empty). No demo buttons or sample submenus are injected here. */
   const inlineButtons = sanitizeButtons(input?.inlineButtons, validSubIds, { maxRows: 10 });
   const submenus = {};
   for (const id of validSubIds) {
@@ -62,12 +64,9 @@ function sanitizeMenu(input = {}) {
     submenus[id] = {
       title: clean(sm.title, 64),
       text: clean(sm.text, 3500),
-      buttons: buttons.length ? buttons : [[{ text: '…', type: 'text', value: '…' }]],
+      buttons,
     };
   }
-
-  if (!inlineButtons.length) inlineButtons.push(...JSON.parse(JSON.stringify(DEFAULT_MENU.inlineButtons)));
-  if (!Object.keys(submenus).length) submenus.shop = JSON.parse(JSON.stringify(DEFAULT_MENU.submenus.shop));
 
   return { welcome, help, inlineButtons, submenus };
 }

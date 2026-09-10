@@ -21,39 +21,19 @@ export const K = {
 
 export const DEFAULT_MENU = {
   welcome: {
-    fa: 'سلام {name} عزیز 👋\nبه ربات ما خوش آمدید!\nاز دکمه‌های زیر استفاده کنید.',
-    en: 'Hello {name} 👋\nWelcome to our bot!\nUse the buttons below.',
+    fa: 'سلام {name} عزیز 👋\nبه ربات ما خوش آمدید!',
+    en: 'Hello {name} 👋\nWelcome to our bot!',
   },
   help: {
     fa: '🤖 راهنمای ربات\n\n/start — شروع و نمایش منو\n/help — نمایش همین راهنما\n/lang — تغییر زبان\n/id — نمایش آیدی عددی شما\n/support — پیام به پشتیبانی\n/end — پایان گفتگو با پشتیبانی\n/ping — بررسی فعال بودن',
     en: '🤖 Bot Help\n\n/start — Start & show the menu\n/help — Show this help\n/lang — Change language\n/id — Show your numeric ID\n/support — Message the support team\n/end — End the support chat\n/ping — Check the bot is alive',
   },
   mainKeyboard: [['/start', '/help'], ['/lang', '/id'], ['/support']],
-  inlineButtons: [
-    [{ text: '🛍 فروشگاه | Shop', type: 'submenu', value: 'shop' }],
-    [{ text: '🌐 وب‌سایت | Website', type: 'url', value: 'https://example.com' }],
-    [{ text: '🌍 تغییر زبان | Language', type: 'callback', value: 'setlang:menu' }],
-    [{ text: '🛡 پشتیبانی | Support', type: 'callback', value: 'support:open' }],
-  ],
-  submenus: {
-    shop: {
-      title: '🛍 فروشگاه',
-      text: 'یکی از گزینه‌های زیر را انتخاب کنید:',
-      buttons: [
-        [{ text: '📄 لیست قیمت', type: 'text', value: 'لیست قیمت‌ها به‌زودی به‌روزرسانی می‌شود!\nبرای اطلاع از تخفیف‌ها در کانال عضو شوید.' }],
-        [{ text: '📱 پشتیبانی محصولات', type: 'submenu', value: 'shop_support' }],
-        [{ text: '🌐 سایت کامل', type: 'url', value: 'https://example.com' }],
-      ],
-    },
-    shop_support: {
-      title: '📱 پشتیبانی محصولات',
-      text: 'چه مشکلی دارید؟',
-      buttons: [
-        [{ text: '💬 گفتگو با پشتیبانی', type: 'callback', value: 'support:open' }],
-        [{ text: '⬅️ بازگشت به فروشگاه', type: 'submenu', value: 'shop' }],
-      ],
-    },
-  },
+  /* The default bot ships with NO inline buttons and NO submenus. Buttons only
+   * appear after the administrator explicitly adds them (text, type, value, row)
+   * from the panel menu builder or the in-Telegram /admin editor. */
+  inlineButtons: [],
+  submenus: {},
 };
 
 export const DEFAULT_SETTINGS = {
@@ -83,7 +63,6 @@ export async function del(env, key) {
   await env.BOT_KV.delete(key);
 }
 
-const deepClone = (v) => JSON.parse(JSON.stringify(v));
 
 export async function getSettings(env) {
   const s = (await getJson(env, K.SETTINGS, {})) || {};
@@ -123,10 +102,12 @@ export function withMenuDefaults(menu = {}) {
       fa: menu?.help?.fa ?? DEFAULT_MENU.help.fa,
       en: menu?.help?.en ?? DEFAULT_MENU.help.en,
     },
-    inlineButtons: Array.isArray(menu?.inlineButtons) && menu.inlineButtons.length
-      ? menu.inlineButtons
-      : deepClone(DEFAULT_MENU.inlineButtons),
-    submenus: Object.keys(submenus).length ? submenus : deepClone(DEFAULT_MENU.submenus),
+    /* No demo buttons: an untouched menu stays button-less. Only buttons the
+     * administrator explicitly saved are ever shown to users. */
+    inlineButtons: Array.isArray(menu?.inlineButtons)
+      ? menu.inlineButtons.filter((r) => Array.isArray(r) && r.length)
+      : [],
+    submenus,
   };
 }
 
