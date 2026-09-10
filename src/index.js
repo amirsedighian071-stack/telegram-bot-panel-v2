@@ -60,6 +60,21 @@ export async function runScheduled(env) {
   }
   await putJson(env, 'v2:runtime:cron', { at, finishedAt: Date.now(), status: errors.length ? 'partial' : 'ok', errors });
 }
+// workerd throws an isolate-killing "Can't read from request stream after response has been
+// sent" whenever a request forwarded to a Durable Object still has an unconsumed body when the
+// response is returned (cloudflare/workerd#918) — e.g. an expired-session 401, an unknown-route
+// 404 or any validation reply that returns before reading the body. Under `wrangler dev` the
+// exception crashes the session and every later request fails with http 500. Buffering the body
+// up front hands the handlers a detached request, so the socket-backed stream is always fully
+// drained before any response can be sent. Oversized bodies are drained too: every bodyLimit
+// cap stays below this ceiling, so such requests can only ever be rejected with 413.
+const MAX_BUFFERED_BODY = 23 * 1024 * 1024;
+async function detachedRequest(request) {
+  if (!request.body) return request;
+  const oversized = Number(request.headers.get('content-length') || 0) > MAX_BUFFERED_BODY;
+  const body = await request.arrayBuffer();
+  return new Request(request, oversized ? { body: null } : { body });
+}
 async function dispatch(request, env, ctx) {
   const { pathname } = new URL(request.url);
   if (pathname.startsWith('/cr-hook/')) return creatorHook(env, request, pathname.slice('/cr-hook/'.length));
@@ -118,6 +133,7 @@ export class BotCoordinator {
   }
   async fetch(request) {
     let path = new URL(request.url).pathname;
+    request = await detachedRequest(request);
     if (path === '/internal/managed/init') return this.enqueue(async () => {
       const meta = await request.json();
       if (!meta?.id || !meta?.credentials || !meta?.baseUrl) return Response.json({ok:false},{status:400});
@@ -136,7 +152,7 @@ export class BotCoordinator {
       if (!route.startsWith('/') || route.startsWith('//') || route.includes('..')) return Response.json({ok:false},{status:400});
       const url = new URL(route, requestEnv.MANAGED_BASE_URL);
       const admin = request.headers.get('x-managed-admin') === '1';
-      request = new Request(url, {method:request.method,headers:request.headers,...(['GET','HEAD'].includes(request.method)?{}:{body:request.body,duplex:'half'})});
+      request = new Request(url, {method:request.method,headers:request.headers,...(['GET','HEAD'].includes(request.method)||!request.body?{}:{body:request.body,duplex:'half'})});
       requestEnv = {...requestEnv,TRUSTED_PARENT_ADMIN:admin}; path=url.pathname;
     }
     const run = () => dispatch(request, requestEnv, this.state);
