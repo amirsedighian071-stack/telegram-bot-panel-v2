@@ -27,6 +27,7 @@ export const V2_DEFAULTS = {
   shop: { cardNumber: '', cardHolder: '', notifyChatId: '', payment: 'manual', requireAddress: false, deliverySlots: [], reservationMinutes: 30, currency: 'IRT', protectContent: true },
   relay: { enabled: false, approval: true, destinations: [], echoToUser: false },
   loyalty: { enabled: true, referralPoints: 10, signupPoints: 0, purchaseUnit: 100000, pointValue: 100, maxDiscountPercent: 20 },
+  news: { autoSend: { enabled: false, category: 'all', intervalMinutes: 60, destinations: [] } },
 };
 
 export function activeModules(settings) {
@@ -71,6 +72,7 @@ export function mergeV2Settings(s) {
     requiredChats: s.requiredChats || (legacy ? { enabled: true, targets: [{ chatId: s.requiredChannel.chatId, url: s.requiredChannel.url || '', title: '', scope: 'all' }] } : d.requiredChats),
     uploads: { ...d.uploads, ...s.uploads, watermark: { ...d.uploads.watermark, ...s.uploads?.watermark } },
     shop: { ...d.shop, ...s.shop }, relay: { ...d.relay, ...s.relay }, loyalty: { ...d.loyalty, ...s.loyalty },
+    news: { autoSend: { ...d.news.autoSend, ...(s.news?.autoSend || {}) } },
   };
 }
 
@@ -132,6 +134,15 @@ export function patchV2Settings(s, body) {
     assert(dest.length <= 10 && dest.every(d => isChatId(d.chatId)), 'invalid_destinations');
     s.relay = { enabled: !!b.enabled, approval: b.approval !== false, echoToUser: !!b.echoToUser, destinations: dest.map(d => ({ chatId: str(d.chatId, 64), title: str(d.title, 64) })) };
     assert(!s.relay.enabled || dest.length || s.relay.echoToUser || s.relay.approval, 'relay_needs_destination');
+  }
+  if (body.news) {
+    const a = body.news.autoSend || body.news;
+    const dest = Array.isArray(a.destinations) ? a.destinations : s.news.autoSend.destinations;
+    assert(dest.length <= 10 && dest.every(d => isChatId(typeof d === 'string' ? d : d.chatId)), 'invalid_destinations');
+    const category = ['all', 'breaking', 'politics', 'economy', 'sports', 'tech'].includes(a.category) ? a.category : 'all';
+    const interval = int(a.intervalMinutes, 10, 1440, 60);
+    assert(interval !== undefined, 'invalid_news_interval');
+    s.news = { autoSend: { enabled: !!a.enabled, category, intervalMinutes: Number(interval), destinations: dest.map(d => typeof d === 'string' ? { chatId: str(d, 64), title: '' } : { chatId: str(d.chatId, 64), title: str(d.title, 64) }) } };
   }
   if (body.loyalty) {
     const b = body.loyalty;

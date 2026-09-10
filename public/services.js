@@ -1656,6 +1656,13 @@ ACTIONS.svBackupSchedule = async () => {
   toast(t("saved"), "success");
 };
 
+function vResetBotCaches() {
+  try {
+    if (typeof MU !== "undefined") { MU.menu = null; MU.sub = null; MU.bot = undefined; }
+    if (typeof V2 !== "undefined") { V2.settings = null; V2.summary = null; V2.cache = {}; }
+  } catch (e) {}
+}
+
 const svOriginalShell = renderShell;
 renderShell = function () {
   svOriginalShell();
@@ -1719,6 +1726,9 @@ ACTIONS.svSelectBot = async (d) => {
   if (!b) return;
   localStorage.setItem("bp_managed_bot", b.id);
   localStorage.setItem("bp_managed_bot_title", b.title);
+  // Drop per-bot caches so every editor (menu buttons included) reloads for the
+  // bot that was just selected.
+  vResetBotCaches();
   closeModal();
   SV.tab = "overview";
   V2.tab = "services";
@@ -1729,6 +1739,7 @@ ACTIONS.svSelectBot = async (d) => {
 ACTIONS.svPrimary = async () => {
   localStorage.removeItem("bp_managed_bot");
   localStorage.removeItem("bp_managed_bot_title");
+  vResetBotCaches();
   closeModal();
   SV.tab = "overview";
   await initV2();

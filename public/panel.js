@@ -1363,6 +1363,12 @@
   }
 
   function renderMenu() {
+    // Buttons are stored per bot (managed bots included). If the selected bot
+    // changed since the menu was loaded, drop the cached editor so the displayed
+    // and saved buttons always belong to the currently selected bot.
+    const activeBot = localStorage.getItem('bp_managed_bot') || '';
+    if (MU.menu && (MU.bot || '') !== activeBot) { MU.menu = null; MU.sub = null; }
+    MU.bot = activeBot;
     $('view').innerHTML =
       '<p class="text-sm text-slate-500 -mt-2 mb-4 px-1">' + t('menuHint') + '</p>' +
       '<div id="menu-editor" class="space-y-4"></div>' +
@@ -1381,6 +1387,7 @@
       const d = await api('/menu');
       MU.menu = d.menu;
       MU.defaults = d.defaults;
+      MU.bot = localStorage.getItem('bp_managed_bot') || '';
       renderMenuEditor();
     } catch (e) { toast(e.message, 'error'); }
   }

@@ -1,8 +1,8 @@
-import { getJson, putJson } from './kv.js';
-import { tgApi, sendToUser } from './bot-api.js';
-import { text as tr, str, int } from './config.js';
-import { XMLParser } from 'fast-xml-parser';
+import { getJson, putJson, getSettings } from './kv.js';
+import { sendToUser, resolveToken } from './bot-api.js';
+import { text as tr, str, isChatId, assert } from './config.js';
 import { publicFeed, safePublicUrl } from './network.js';
+import { parseFeed } from './automation.js';
 
 export const NEWS_CATEGORIES = {
   breaking: { fa: '🚨 خبرهای فوری و مهم', en: '🚨 Breaking & Top Stories', icon: 'zap' },
@@ -11,6 +11,8 @@ export const NEWS_CATEGORIES = {
   sports: { fa: '⚽ اخبار ورزشی', en: '⚽ Sports News', icon: 'trophy' },
   tech: { fa: '💻 فناوری و دانش‌بنیان', en: '💻 Tech & Innovation', icon: 'cpu' },
 };
+export const NEWS_CATEGORY_KEYS = ['all', ...Object.keys(NEWS_CATEGORIES)];
+export const NEWS_SEND_CATS = ['breaking', 'politics', 'economy', 'sports', 'tech'];
 
 export const NEWS_SOURCES = [
   { id: 'irna', name: 'خبرگزاری ایرنا (IRNA)', url: 'https://www.irna.ir/rss' },
@@ -77,40 +79,167 @@ export const FALLBACK_NEWS = [
   },
 ];
 
-export async function fetchLiveNews(env, category = 'breaking') {
-  const cacheKey = `v2:news:${category}`;
-  const cached = await getJson(env, cacheKey);
-  if (cached && Date.now() - (cached.at || 0) < 5 * 60000) return cached.items;
+/* Keyword classifiers. A dedicated feed per category is unreliable across Iranian
+ * agencies, so every general source is aggregated and each item is classified by
+ * keywords. Title hits weigh more than summary hits. */
+const NEWS_KEYWORDS = {
+  politics: ['سیاست', 'سیاسی', 'دولت', 'مجلس', 'وزیر', 'رییس‌جمهور', 'رئیس‌جمهور', 'دیپلمات', 'انتخابات', 'کابینه', 'پارلمان', 'هیئت دولت', 'عراقچی', 'روابط خارجی', 'سخنگوی وزارت', 'قطعنامه', 'مذاکره', 'government', 'parliament', 'political', 'minister', 'president', 'diplomat', 'election'],
+  economy: ['اقتصاد', 'اقتصادی', 'بورس', 'بازار سرمایه', 'دلار', 'تورم', 'ارز', 'نفت', 'صادرات', 'واردات', 'بانک مرکزی', 'یارانه', 'سرمایه‌گذاری', 'پتروشیمی', 'فولاد', 'سکه', 'طلا', 'بودجه', 'مالیات', 'economy', 'market', 'inflation', 'stock', 'oil', 'export', 'budget'],
+  sports: ['ورزش', 'ورزشی', 'فوتبال', 'تیم ملی', 'لیگ برتر', 'استقلال', 'پرسپولیس', 'بازیکن', 'مربی', 'فدراسیون', 'المپیک', 'کشتی', 'والیبال', 'بسکتبال', 'هندبال', 'جام جهانی', 'نفت آبادان', 'سپاهان', 'تراکتور', 'دروازه‌بان', 'گلزنی', 'sport', 'football', 'soccer', 'league', 'match', 'olympic', 'goal'],
+  tech: ['فناوری', 'هوش مصنوعی', 'تکنولوژی', 'دیجیتال', 'اینترنت', 'موبایل', 'گوشی', 'اپلیکیشن', 'نرم‌افزار', 'سخت‌افزار', 'استارتاپ', 'دانش‌بنیان', 'رمزارز', 'بیت‌کوین', 'فضای مجازی', 'سایبری', 'پهپاد', 'ماهواره', 'ناسا', 'رباتیک', 'tech', 'software', 'internet', 'digital', 'startup', 'crypto', 'artificial intelligence'],
+};
+const NEWS_KEYWORD_FALLBACK_ORDER = ['politics', 'economy', 'sports', 'tech'];
 
-  let items = FALLBACK_NEWS.filter(n => category === 'breaking' || n.category === category);
+const normalize = (value) => String(value || '').replace(/[\u200c\u200f\u200e]/g, ' ').toLowerCase();
+function classifyItem(item) {
+  const title = normalize(item.title), summary = normalize(item.summary);
+  let best = '', bestScore = 0;
+  for (const cat of NEWS_KEYWORD_FALLBACK_ORDER) {
+    let score = 0;
+    for (const kw of NEWS_KEYWORDS[cat]) {
+      const needle = normalize(kw);
+      if (title.includes(needle)) score += 3;
+      else if (summary.includes(needle)) score += 1;
+    }
+    if (score > bestScore) { bestScore = score; best = cat; }
+  }
+  return bestScore >= 3 ? best : item.category && NEWS_CATEGORY_KEYS.includes(item.category) ? item.category : 'breaking';
+}
 
-  try {
-    const feedUrl = NEWS_SOURCES[0].url;
-    const xml = await publicFeed(feedUrl);
-    const parser = new XMLParser({ ignoreAttributes: false, processEntities: false, parseTagValue: false, trimValues: true });
-    const doc = parser.parse(xml);
-    const rawItems = doc.rss?.channel?.item || doc.feed?.entry || [];
-    const list = Array.isArray(rawItems) ? rawItems : [rawItems];
-    const parsed = list.slice(0, 10).map((item, idx) => {
-      const title = String(typeof item.title === 'object' ? item.title?.['#text'] || '' : item.title || '').replace(/<[^>]*>/g, '').trim();
-      const summary = String(typeof item.description === 'object' ? item.description?.['#text'] || '' : item.description || '').replace(/<[^>]*>/g, '').trim().slice(0, 300);
-      const url = String(typeof item.link === 'string' ? item.link : item.link?.['@_href'] || item.link?.['#text'] || '').trim();
-      return {
-        id: `live_${category}_${idx}`,
-        category,
-        title: title || 'خبر مهم روز',
-        summary: summary || 'برای مطالعه متن کامل به منبع خبر مراجعه کنید.',
-        source: 'خبرگزاری ایرنا',
-        url: safePublicUrl(url) ? url : 'https://www.irna.ir',
+const SRC_CACHE_TTL = 5 * 60000;
+export async function aggregateNews(env) {
+  const cached = await Promise.all(NEWS_SOURCES.map(src => getJson(env, `v2:news:src:${src.id}`)));
+  const settled = await Promise.allSettled(NEWS_SOURCES.map(async (src, i) => {
+    const hit = cached[i];
+    if (hit && Date.now() - (hit.at || 0) < SRC_CACHE_TTL && Array.isArray(hit.items)) return hit.items;
+    let items = [];
+    try {
+      const feed = parseFeed(await publicFeed(src.url));
+      items = feed.map((item, idx) => ({
+        id: `${src.id}:${item.id}`,
+        title: item.title,
+        summary: item.summary,
+        url: item.url,
+        source: src.name,
         publishedAt: Date.now() - idx * 10 * 60000,
-      };
-    }).filter(i => i.title);
+      }));
+    } catch {}
+    await putJson(env, `v2:news:src:${src.id}`, { at: Date.now(), items }, { ttl: Math.ceil(SRC_CACHE_TTL / 1000) });
+    return items;
+  }));
+  const merged = [], seen = new Set();
+  for (const r of settled) {
+    if (r.status !== 'fulfilled') continue;
+    for (const item of r.value) {
+      const key = normalize(item.title).slice(0, 80);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(item);
+    }
+  }
+  return merged;
+}
 
-    if (parsed.length) items = parsed;
-  } catch {}
+const fallbackWithCategory = (category) =>
+  FALLBACK_NEWS.filter(n => n.category === category).map(n => ({ ...n, id: 'fb:' + n.id }));
 
-  await putJson(env, cacheKey, { at: Date.now(), items }, { ttl: 600 });
-  return items;
+export async function fetchLiveNews(env, category = 'breaking') {
+  const live = (await aggregateNews(env)).map(item => ({ ...item, category: classifyItem(item) }));
+  const mixed = category === 'breaking' || category === 'all';
+  if (mixed) {
+    if (live.length) return live.slice(0, 12);
+    return fallbackWithCategory('breaking').concat(FALLBACK_NEWS.filter(n => n.category !== 'breaking').map(n => ({ ...n, id: 'fb:' + n.id })));
+  }
+  // A dedicated category must only ever contain items of that category.
+  let items = live.filter(i => i.category === category);
+  if (items.length < 3) {
+    for (const fb of fallbackWithCategory(category)) {
+      if (items.length >= 5) break;
+      if (!items.some(i => normalize(i.title).slice(0, 80) === normalize(fb.title).slice(0, 80))) items.push(fb);
+    }
+  }
+  return items.slice(0, 12);
+}
+
+export function newsDigestText(items, category = 'all', lang = 'fa') {
+  const now = new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', dateStyle: 'full', timeStyle: 'short' }).format(new Date());
+  const header = category === 'all'
+    ? `📰 ${tr('خلاصه خبرهای مهم امروز', 'Today\'s top news digest', lang)}\n🕐 ${now}\n────────────────────`
+    : `${NEWS_CATEGORIES[category]?.fa || NEWS_CATEGORIES.breaking.fa}\n🕐 ${now}\n────────────────────`;
+  let body = '';
+  if (category === 'all') {
+    for (const cat of NEWS_SEND_CATS) {
+      const rows = items.filter(i => i.category === cat).slice(0, 2);
+      if (!rows.length) continue;
+      body += `\n${NEWS_CATEGORIES[cat].fa}\n`;
+      for (const item of rows) body += `• ${item.title}\n🔗 ${item.url}\n`;
+    }
+  } else {
+    for (const [i, item] of items.slice(0, 8).entries()) body += `\n${i + 1}. ${item.title}\n🔗 ${item.url}\n🏛 ${item.source}\n`;
+  }
+  return `${header}${body}\n────────────────────\n`;
+}
+
+export async function newsDestinations(env, override = []) {
+  const list = (Array.isArray(override) && override.length ? override : (await getSettings(env)).news?.autoSend?.destinations || [])
+    .map(d => typeof d === 'string' ? { chatId: d, title: '' } : d)
+    .filter(d => d.chatId && isChatId(d.chatId));
+  return list.slice(0, 10);
+}
+
+export async function sendNewsDigest(env, { category = 'all', destinations = [], items = null } = {}) {
+  const token = await resolveToken(env);
+  assert(token, 'token_missing');
+  const targets = await newsDestinations(env, destinations);
+  assert(targets.length, 'invalid_destinations');
+  let list = items;
+  if (!list) {
+    if (category === 'all') {
+      list = [];
+      for (const cat of NEWS_SEND_CATS) list.push(...(await fetchLiveNews(env, cat)).slice(0, 2));
+    } else list = await fetchLiveNews(env, category);
+  }
+  assert(list.length, 'news_empty');
+  const text = newsDigestText(list, category);
+  const results = [];
+  for (const d of targets) {
+    const res = await sendToUser(token, d.chatId, text.slice(0, 4096), { disable_web_page_preview: true });
+    results.push({ chatId: d.chatId, title: d.title || '', ok: !!res.ok, error: res.ok ? '' : str(res.description || '', 160) });
+  }
+  return { category, sent: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length, results };
+}
+
+/* Scheduled news delivery. Runs from the worker cron; pulls only items that were
+ * not sent before, so an idle news day sends nothing. */
+const NEWS_STATE_KEY = 'v2:news:state';
+export async function newsTick(env) {
+  const cfg = (await getSettings(env)).news?.autoSend;
+  if (!cfg?.enabled || !cfg.destinations?.length) return;
+  const token = await resolveToken(env);
+  if (!token) return;
+  const state = (await getJson(env, NEWS_STATE_KEY)) || { nextAt: 0, sentIds: [], lastAt: 0 };
+  if (!state.nextAt || state.nextAt > Date.now()) {
+    if (!state.nextAt) { state.nextAt = Date.now() + Math.max(10, cfg.intervalMinutes) * 60000; await putJson(env, NEWS_STATE_KEY, state); }
+    return;
+  }
+  const category = NEWS_CATEGORY_KEYS.includes(cfg.category) ? cfg.category : 'all';
+  const fresh = [];
+  if (category === 'all') {
+    for (const cat of NEWS_SEND_CATS) for (const item of (await fetchLiveNews(env, cat)).slice(0, 2)) fresh.push(item);
+  } else fresh.push(...await fetchLiveNews(env, category));
+  const take = fresh.filter(i => !(state.sentIds || []).includes(i.id)).slice(0, 8);
+  state.nextAt = Date.now() + Math.max(10, cfg.intervalMinutes) * 60000;
+  if (take.length) {
+    const text = newsDigestText(take, category).slice(0, 4096);
+    for (const d of cfg.destinations.slice(0, 10)) {
+      if (!isChatId(d.chatId)) continue;
+      const res = await sendToUser(token, d.chatId, text, { disable_web_page_preview: true });
+      if (!res.ok && res.description) state.lastError = str(res.description, 160);
+    }
+    state.sentIds = [...new Set([...(state.sentIds || []), ...take.map(i => i.id)])].slice(-300);
+    state.lastAt = Date.now();
+  }
+  await putJson(env, NEWS_STATE_KEY, state);
 }
 
 export async function newsHome(env, token, user, lang = 'fa') {
@@ -118,13 +247,13 @@ export async function newsHome(env, token, user, lang = 'fa') {
   const top = breaking.slice(0, 3);
 
   let text = `📰 ${tr('پایگاه اخبار مهم کشور ایران', 'Iran Breaking & Important News', lang)}\n` +
-    `جمع‌آوری لحظه‌ای از معتبرترین رسانه‌ها و خبرگزاری‌های رسمی کشور\n` +
+    `${tr('جمع‌آوری لحظه‌ای از معتبرترین رسانه‌ها و خبرگزاری‌های رسمی کشور', 'Live collection from the country\'s most trusted news agencies', lang)}\n` +
     `────────────────────\n\n` +
     `🚨 ${tr('مهم‌ترین سرخط خبرها:', 'Top Headlines:', lang)}\n\n`;
 
   for (let i = 0; i < top.length; i++) {
     const n = top[i];
-    text += `${i + 1}. 📌 ${n.title}\n   🔹 ${n.summary.slice(0, 120)}…\n   🏛 ${n.source}\n\n`;
+    text += `${i + 1}. 📌 ${n.title}\n   🔹 ${String(n.summary || '').slice(0, 120)}…\n   🏛 ${n.source}\n\n`;
   }
   text += `────────────────────\n` +
     `${tr('برای مشاهده اخبار بر اساس موضوع، یکی از دسته‌بندی‌های زیر را انتخاب کنید:', 'Select a category below to browse news:', lang)}`;
@@ -154,7 +283,7 @@ export async function newsCategory(env, token, user, lang = 'fa', category = 'br
   const catInfo = NEWS_CATEGORIES[category] || NEWS_CATEGORIES.breaking;
   const items = await fetchLiveNews(env, category);
 
-  let text = `${catInfo.fa}\n────────────────────\n\n`;
+  let text = `${catInfo.fa}\n${tr('به‌روزشده:', 'Updated:', lang)} ${new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit' }).format(new Date())}\n────────────────────\n\n`;
   const rows = [];
 
   for (let i = 0; i < items.length; i++) {
@@ -162,6 +291,7 @@ export async function newsCategory(env, token, user, lang = 'fa', category = 'br
     text += `${i + 1}. 📌 ${item.title}\n   🏛 ${item.source}\n\n`;
     rows.push([{ text: `📄 ${item.title.slice(0, 36)}…`, callback_data: `news:item:${category}:${i}` }]);
   }
+  if (!items.length) text += tr('فعلاً خبری در این دسته یافت نشد.', 'No news found in this category yet.', lang) + '\n\n';
 
   rows.push([
     { text: '🔄 ' + tr('بروزرسانی', 'Refresh', lang), callback_data: `news:cat:${category}` },
@@ -183,7 +313,7 @@ export async function newsItem(env, token, user, lang = 'fa', category = 'breaki
 
   const text = `📰 <b>${item.title}</b>\n\n` +
     `⏰ ${tr('زمان انتشار', 'Published', lang)}: ${timeStr} | 🏛 ${item.source}\n\n` +
-    `${item.summary}\n\n` +
+    `${String(item.summary || '').slice(0, 1200)}\n\n` +
     `────────────────────\n` +
     `🔗 ${tr('برای مشاهده متن کامل خبر در سایت مرجع، دکمه زیر را لمس کنید.', 'Tap below to read the full article on the news website.', lang)}`;
 

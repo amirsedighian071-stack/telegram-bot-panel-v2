@@ -25,7 +25,7 @@ export function publicView(settings, envToken, env = {}) {
     requiredChannel: settings.requiredChannel,
     botPurpose: settings.botPurpose, customModules: settings.customModules, modules: activeModules(settings), purposes: PURPOSES,
     botUsername: settings.botUsername, requiredChats: settings.requiredChats, uploads: settings.uploads,
-    shop: settings.shop, relay: settings.relay, loyalty: settings.loyalty,
+    shop: settings.shop, relay: settings.relay, loyalty: settings.loyalty, news: settings.news,
     miniApp: {
       url: publicBaseUrl,
       adminId,
