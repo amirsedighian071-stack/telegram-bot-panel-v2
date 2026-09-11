@@ -72,6 +72,8 @@
       welcomeFa: 'متن فارسی (/start)', welcomeEn: 'متن انگلیسی (/start)', helpFa: 'راهنمای فارسی (/help)', helpEn: 'راهنمای انگلیسی (/help)',
       tplHint: 'متغیرها: {name} نام، {username} یوزرنیم، {id} آیدی',
       btnType: 'نوع', typeUrl: 'لینک', typeCallback: 'کال‌بک', value: 'مقدار', valueUrl: 'https://…', valueCb: 'مثلاً my:action (حداکثر ۶۴ بایت)',
+      cbTooLong: 'مقدار کال‌بک حداکثر ۶۴ بایت است؛ هر حرف فارسی ۲ بایت حساب می‌شود. مقدار کوتاه‌تری بنویسید.',
+      cbTrimmed: 'مقدار کال‌بک به ۶۴ بایت کوتاه شد تا ربات بتواند دکمه را بسازد.',
       resetDefaults: 'بازنشانی به پیش‌فرض',
       confirmReset: 'منو به حالت پیش‌فرض بازگردانده شود؟',
       botSettings: 'تنظیمات ربات', botToken: 'توکن ربات', tokenStored: 'توکن ذخیره‌شده:',
@@ -165,6 +167,8 @@
       welcomeFa: 'Persian text (/start)', welcomeEn: 'English text (/start)', helpFa: 'Persian help (/help)', helpEn: 'English help (/help)',
       tplHint: 'Variables: {name}, {username}, {id}',
       btnType: 'Type', typeUrl: 'URL', typeCallback: 'Callback', value: 'Value', valueUrl: 'https://…', valueCb: 'e.g. my:action (max 64 bytes)',
+      cbTooLong: 'Callback data is limited to 64 bytes — Persian letters count as 2. Use a shorter value.',
+      cbTrimmed: 'The callback value was trimmed to 64 bytes so the bot can render the button.',
       resetDefaults: 'Reset to defaults',
       confirmReset: 'Reset menu to defaults?',
       botSettings: 'Bot settings', botToken: 'Bot token', tokenStored: 'Stored token:',
@@ -285,6 +289,10 @@
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  // Telegram limits callback_data to 64 UTF-8 *bytes*, so Persian values count
+  // double — validating by characters let a button through that Telegram then
+  // refused, which killed the whole home keyboard.
+  const byteLen = (s) => { try { return new TextEncoder().encode(String(s ?? '')).length; } catch (e) { return unescape(encodeURIComponent(String(s ?? ''))).length; } };
   const t = (k) => (I18N[S.lang] && I18N[S.lang][k]) || I18N.fa[k] || k;
   const loc = () => (S.lang === 'fa' ? 'fa-IR' : 'en-US');
   const fmtNum = (n) => Number(n || 0).toLocaleString(loc());
@@ -377,7 +385,7 @@
       return;
     }
     _lastToast = { msg, type, at: now };
-    const map = { success: ['check-circle-2', 'text-emerald-500'], error: ['alert-circle', 'text-rose-500'], info: ['info', 'text-sky-500'] };
+    const map = { success: ['check-circle-2', 'text-emerald-500'], error: ['alert-circle', 'text-rose-500'], warn: ['alert-triangle', 'text-amber-500'], info: ['info', 'text-sky-500'] };
     const [icon, color] = map[type] || map.info;
     const el = document.createElement('div');
     el.className = 'pointer-events-auto flex items-center gap-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg px-4 py-3 transition-opacity duration-300 animate-fadeIn';
@@ -1980,8 +1988,21 @@
 
     menuSave: async () => {
       syncMenuSafe();
-      try { await api('/menu', { method: 'PUT', body: MU.menu }); toast(t('saved'), 'success'); }
-      catch (e) { toast(e.message, 'error'); }
+      try {
+        const before = JSON.stringify((MU.menu.inlineButtons || []).map((r) => (r || []).map((b) => b && b.value)));
+        const d = await api('/menu', { method: 'PUT', body: MU.menu });
+        // The server stores what the bot will actually render (over-long callback
+        // values are trimmed there), so re-sync the editor with the saved menu.
+        if (d && d.menu) {
+          const keepSub = MU.sub && d.menu.submenus && d.menu.submenus[MU.sub] ? MU.sub : null;
+          MU.menu = d.menu;
+          MU.sub = keepSub;
+          renderMenuEditor();
+        }
+        const after = JSON.stringify(((d && d.menu && d.menu.inlineButtons) || []).map((r) => (r || []).map((b) => b && b.value)));
+        if (before !== after && !MU.sub) toast(t('cbTrimmed'), 'warn');
+        else toast(t('saved'), 'success');
+      } catch (e) { toast(e.message, 'error'); }
     },
     menuReset: async () => {
       if (!(await confirmDlg(t('confirmReset'), t('resetDefaults')))) return;
@@ -2004,7 +2025,9 @@
       const value = valueEl ? String(valueEl.value).trim() : '';
       if (!text) return toast(t('invalidForm'), 'error');
       if (type === 'url' && !/^https?:\/\//.test(value)) return toast(t('invalidForm'), 'error');
-      if (type === 'callback' && !(value.length >= 1 && value.length <= 64)) return toast(t('invalidForm'), 'error');
+      // 64 bytes, not 64 characters: a Persian callback value would otherwise be
+      // accepted here and rejected by Telegram, taking the whole menu down.
+      if (type === 'callback' && !(byteLen(value) >= 1 && byteLen(value) <= 64)) return toast(byteLen(value) > 64 ? t('cbTooLong') : t('invalidForm'), 'error');
       if (type === 'submenu' && !value) return toast(t('invalidForm'), 'error');
       if (type === 'text' && !(value.length >= 1 && value.length <= 200)) return toast(t('invalidForm'), 'error');
       syncMenuSafe();

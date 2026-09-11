@@ -8,7 +8,7 @@ import {
   getTicket, markTicketRead, ticketAppendAdmin, closeTicket,
 } from './kv.js';
 import { entityKey, allEntities } from './storage.js';
-import { str, int, isChatId, text as tr, assert, PURPOSES, MODULES, enabled, isValidTime } from './config.js';
+import { str, int, isChatId, text as tr, assert, PURPOSES, MODULES, enabled, isValidTime, label, byteLength } from './config.js';
 import { sendToUser, resolveToken, tgApi } from './bot-api.js';
 import { NEWS_CATEGORIES, sendNewsDigest } from './news.js';
 import { RATES_CATEGORIES, RATES_SEND_CATS, sendRatesNow } from './rates.js';
@@ -326,16 +326,17 @@ async function relayViewScreen(env, token, chatId, settings, lang, relayId) {
 
 /* ============ Menu & button editor ============ */
 function menuListScreen(menu, lang) {
-  const rows = menu.inlineButtons || [];
+  const rows = (Array.isArray(menu.inlineButtons) ? menu.inlineButtons : []).filter((row) => Array.isArray(row));
   const lines = [`🎛 <b>${tr('دکمه‌های صفحه اصلی', 'Main-page buttons', lang)}</b>`, '', tr('برای ویرایش، جابجایی یا حذف، دکمه هر ردیف را لمس کنید:', 'Tap a row to edit, move or delete it:', lang)];
   rows.forEach((row, r) => row.forEach((b, bi) => {
-    const meta = typeName(b.type, lang) + (b.type === 'submenu' ? ` → ${b.value}` : b.value ? ` → ${String(b.value).slice(0, 28)}` : '');
-    lines.push(`${r + 1}-${bi + 1}. ${b.text} <i>(${meta})</i>`);
+    const btn = b || {};
+    const meta = typeName(btn.type, lang) + (btn.type === 'submenu' ? ` → ${btn.value}` : btn.value ? ` → ${String(btn.value).slice(0, 28)}` : '');
+    lines.push(`${r + 1}-${bi + 1}. ${str(btn.text, 64)} <i>(${meta})</i>`);
   }));
   const kb = [];
   rows.forEach((row, r) => row.forEach((b, bi) => {
     kb.push([
-      { text: `✏️ ${r + 1}-${bi + 1} ${b.text.slice(0, 18)}`, callback_data: `adm:mb:${r}:${bi}` },
+      { text: `✏️ ${r + 1}-${bi + 1} ${str((b || {}).text, 18)}`, callback_data: `adm:mb:${r}:${bi}` },
       { text: '🗑', callback_data: `adm:mbx:${r}:${bi}` },
     ]);
   }));
@@ -380,12 +381,13 @@ function buttonEditorScreen(menu, r, b, lang) {
 }
 
 function validateMenuButton(btn, menu) {
-  const text = str(btn.text, 64);
+  const text = label(btn.text, 64);
   assert(text, 'invalid_menu_button');
   const type = ['url', 'callback', 'submenu', 'text'].includes(btn.type) ? btn.type : 'callback';
   const value = String(btn.value ?? '').trim();
   if (type === 'url') { assert(/^https?:\/\//i.test(value), 'invalid_menu_button'); return { text, type, value: value.slice(0, 512) }; }
-  if (type === 'callback') { assert(value.length >= 1 && value.length <= 64, 'invalid_menu_button'); return { text, type, value }; }
+  // Callback data is limited to 64 UTF-8 bytes, so Persian values count double.
+  if (type === 'callback') { assert(byteLength(value) >= 1 && byteLength(value) <= 64, 'callback_too_long'); return { text, type, value }; }
   if (type === 'text') { assert(value.length >= 1 && value.length <= 200, 'invalid_menu_button'); return { text, type, value }; }
   assert(menu?.submenus?.[value], 'submenu_not_found');
   return { text, type, value };
@@ -400,7 +402,8 @@ async function mutateMenu(env, mutator) {
 }
 
 const errText = (e, lang) => ({
-  invalid_menu_button: tr('مقدار دکمه معتبر نیست (لینک با https، کال‌بک ≤۶۴، متن ≤۲۰۰).', 'Invalid button value (https URL, callback ≤64, text ≤200).', lang),
+  invalid_menu_button: tr('مقدار دکمه معتبر نیست (لینک با https، کال‌بک ≤۶۴ بایت، متن ≤۲۰۰).', 'Invalid button value (https URL, callback ≤64 bytes, text ≤200).', lang),
+  callback_too_long: tr('مقدار کال‌بک حداکثر ۶۴ بایت است (حروف فارسی ۲ بایت). مقدار کوتاه‌تری بنویسید.', 'Callback data is limited to 64 bytes (Persian letters count as 2). Use a shorter value.', lang),
   submenu_not_found: tr('زیرمنوی انتخابی وجود ندارد؛ ابتدا از پنل وب بسازید.', 'The submenu does not exist; create it in the web panel first.', lang),
   invalid_destinations: tr('مقصد معتبری ثبت نشده؛ با دکمه «مقصدها» آیدی کانال یا گروه را ثبت کنید.', 'No valid destinations; set channel/group IDs with the Destinations button first.', lang),
   news_empty: tr('فعلاً خبر تازه‌ای برای این دسته پیدا نشد؛ بعداً تلاش کنید.', 'No fresh news found for this category right now; try again later.', lang),

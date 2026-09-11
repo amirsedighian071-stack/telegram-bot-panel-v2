@@ -100,3 +100,25 @@ test("the mobile More sheet always offers the menu & buttons section", () => {
   assert(labels.some((l) => l.includes("کاربران")), "More sheet must list users");
   tap(doc.querySelector('[data-act="modalClose"]'));
 });
+
+test("a callback value over 64 bytes is refused before it can break the bot", async () => {
+  const { doc, inject, tap } = bootWithMenus({ primary: MENU_A });
+  await new Promise((r) => setTimeout(r, 20));
+
+  tap(doc.querySelector('[data-act="btnAddOpen"]'));
+  doc.getElementById("bm-text").value = "پشتیبانی";
+  doc.getElementById("bm-type").value = "callback";
+  // 39 characters — but 76 UTF-8 bytes, which Telegram refuses.
+  doc.getElementById("bm-value").value = "پشتیبانی و پاسخ به سوالات متداول کاربران";
+  tap(doc.querySelector('[data-act="btnModalAdd"]'));
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(doc.querySelectorAll("#btn-editor .ib-card").length, 1, "the unusable button must not be added");
+  assert.match(doc.getElementById("toasts").textContent, /بایت/, "the admin is told why");
+
+  // The same button with a value that fits is accepted.
+  doc.getElementById("bm-value").value = "support:fa";
+  tap(doc.querySelector('[data-act="btnModalAdd"]'));
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(doc.querySelectorAll("#btn-editor .ib-card").length, 2, "a valid value is added");
+  assert.equal(doc.querySelectorAll("#btn-editor .ib-card")[1].querySelector(".ib-t").value, "پشتیبانی");
+});

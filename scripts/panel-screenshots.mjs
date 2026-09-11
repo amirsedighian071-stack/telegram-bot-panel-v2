@@ -14,6 +14,15 @@
  *
  * Requires: Node >= 22, `npm install`, a Playwright browser (`npx playwright install chromium`)
  * and a working `npx wrangler dev` (Cloudflare local emulation).
+ *
+ * Optional environment:
+ *   SCREENSHOT_CHROMIUM  absolute path to a chromium binary to drive instead of the
+ *                        one Playwright downloaded (sandboxes/CI without a browser
+ *                        download). Combine with LD_LIBRARY_PATH when the binary
+ *                        needs bundled shared libraries.
+ *   SCREENSHOT_HOST      host for `wrangler dev` (default 127.0.0.1; use 0.0.0.0 to
+ *                        expose the panel for a live preview while shooting).
+ *   SCREENSHOT_PORT      port for `wrangler dev` (default 8799).
  */
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -23,6 +32,7 @@ import { chromium } from '@playwright/test';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.SCREENSHOT_PORT || 8799);
+const HOST = process.env.SCREENSHOT_HOST || '127.0.0.1';
 const BASE = `http://127.0.0.1:${PORT}`;
 const INITIAL_PASSWORD = 'botpanel123';
 const NEW_PASSWORD = 'screenshot12345';
@@ -48,9 +58,18 @@ async function waitForHttp(url, timeoutMs = 240000) {
 console.log('→ building panel assets…');
 execFileSync('node', ['scripts/build-panel.mjs'], { stdio: 'inherit' });
 
+// Local state from an earlier run would keep the previous password, so every
+// pass starts from a genuinely fresh install (the login shot depends on it).
+fs.rmSync(path.join(ROOT, '.wrangler', 'state'), { recursive: true, force: true });
+
 console.log(`→ starting wrangler dev on port ${PORT}…`);
-const wrangler = spawn('npx', ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', String(PORT)], { stdio: ['ignore', 'inherit', 'inherit'] });
-const stop = () => { try { wrangler.kill('SIGTERM'); } catch (e) {} };
+// Spawn wrangler directly: killing the `npx` wrapper can leave workerd behind
+// holding the log pipe open.
+const wrangler = spawn(process.execPath, ['node_modules/wrangler/bin/wrangler.js', 'dev', '--ip', HOST, '--port', String(PORT)], { stdio: ['ignore', 'inherit', 'inherit'] });
+const stop = () => {
+  try { wrangler.kill('SIGTERM'); } catch (e) {}
+  setTimeout(() => { try { wrangler.kill('SIGKILL'); } catch (e) {} }, 4000).unref();
+};
 process.on('exit', stop);
 process.on('SIGINT', () => { stop(); process.exit(130); });
 
@@ -58,11 +77,25 @@ try {
   await waitForHttp(`${BASE}/`);
   console.log('→ panel is up, launching browser…');
 
-  const browser = await chromium.launch();
+  // SCREENSHOT_CHROMIUM lets a sandbox or CI box drive an existing chromium
+  // binary when Playwright's own download is unavailable.
+  const browser = await chromium.launch({
+    executablePath: process.env.SCREENSHOT_CHROMIUM || undefined,
+    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  });
   const shots = [];
-  const take = (page, file, opts = {}) => page.screenshot({ path: out(file), type: file.endsWith('.png') ? 'png' : 'jpeg', quality: 88, ...opts })
-    .then(() => { shots.push(file); console.log(`  ✓ ${file}`); })
-    .catch(e => console.warn(`  ! could not capture ${file}: ${e.message}`));
+  // Keep the container format and the file extension in agreement: a JPEG named
+  // .webp renders inconsistently on GitHub's image proxy.
+  const format = file => (file.endsWith('.png') ? 'png' : file.endsWith('.webp') ? 'webp' : 'jpeg');
+  const take = (page, file, opts = {}) => {
+    const type = format(file);
+    const shot = { path: out(file), type, ...opts };
+    if (type === 'png') delete shot.quality; // PNG has no quality knob
+    else shot.quality = 88;
+    return page.screenshot(shot)
+      .then(() => { shots.push(file); console.log(`  ✓ ${file}`); })
+      .catch(e => console.warn(`  ! could not capture ${file}: ${e.message}`));
+  };
 
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
   page.setDefaultTimeout(30000);
@@ -81,7 +114,9 @@ try {
   await page.fill('#setup-new', NEW_PASSWORD);
   await page.fill('#setup-repeat', NEW_PASSWORD);
   await page.click('#setup-submit');
-  await page.waitForFunction(() => window.S && S.token && document.querySelector('#view, main .v-card, main'), { timeout: 30000 });
+  // `S` is a top-level lexical binding of the panel bundle, so it is reachable
+  // in page scope but never as `window.S`.
+  await page.waitForFunction(() => typeof S !== 'undefined' && S.token && document.querySelector('#view, main .v-card, main'), { timeout: 30000 });
   await sleep(900);
 
   const go = async (hash, waitMs = 1200) => {
