@@ -13,7 +13,7 @@ export const PURPOSES = {
   faq: { fa: 'راهنما و پرسش‌وپاسخ', en: 'FAQ assistant', icon: 'messages-square', modules: ['faq', 'support', 'menu'], desc: 'پاسخ‌های آماده دو زبانه با دکمه شیشه‌ای' },
   contest: { fa: 'مسابقه و باشگاه اعضا', en: 'Community contests', icon: 'trophy', modules: ['crm', 'broadcast', 'channel', 'support', 'menu'], desc: 'کوییز، نظرسنجی، امتیاز و معرفی دوستان' },
   rates: { fa: 'قیمت طلا، دلار و تتر', en: 'Gold, USD & crypto rates', icon: 'trending-up', modules: ['catalog', 'crm', 'broadcast', 'support', 'menu'], desc: 'قیمت لحظه‌ای طلا، سکه، دلار، تتر، ارزها و رمزارزها با نوسانات، سود و زیان و ارسال زمان‌بندی‌شده' },
-  news: { fa: 'خبر مهم کشور ایران', en: 'Iran news publisher', icon: 'newspaper', modules: ['channel', 'broadcast', 'menu', 'support'], desc: 'جمع‌آوری و ارسال خودکار اخبار فوری و مهم کشور از معتبرترین خبرگزاری‌ها به کانال یا پی‌وی' },
+  news: { fa: 'خبر کل کشور', en: 'Nation-wide news publisher', icon: 'newspaper', modules: ['channel', 'broadcast', 'menu', 'support'], desc: 'اخبار ایران و خبرهای جهان (با ترجمه فارسی)؛ دسته‌بندی سیاسی، اقتصادی، ورزشی و فناوری با ارسال زمان‌بندی‌شده به کانال یا گروه' },
   membership: { fa: 'باشگاه محتوای قفل‌دار', en: 'Members library', icon: 'key-round', modules: ['catalog', 'crm', 'broadcast', 'support', 'menu'], desc: 'محتوای ویژه اعضا با چند قفل کانال و گروه' },
 };
 
@@ -27,7 +27,8 @@ export const V2_DEFAULTS = {
   shop: { cardNumber: '', cardHolder: '', notifyChatId: '', payment: 'manual', requireAddress: false, deliverySlots: [], reservationMinutes: 30, currency: 'IRT', protectContent: true },
   relay: { enabled: false, approval: true, destinations: [], echoToUser: false },
   loyalty: { enabled: true, referralPoints: 10, signupPoints: 0, purchaseUnit: 100000, pointValue: 100, maxDiscountPercent: 20 },
-  news: { autoSend: { enabled: false, category: 'all', intervalMinutes: 60, destinations: [] } },
+  news: { autoSend: { enabled: false, category: 'all', intervalMinutes: 60, time: '', destinations: [] } },
+  rates: { autoSend: { enabled: false, category: 'all', time: '09:00', destinations: [] } },
 };
 
 export function activeModules(settings) {
@@ -73,8 +74,10 @@ export function mergeV2Settings(s) {
     uploads: { ...d.uploads, ...s.uploads, watermark: { ...d.uploads.watermark, ...s.uploads?.watermark } },
     shop: { ...d.shop, ...s.shop }, relay: { ...d.relay, ...s.relay }, loyalty: { ...d.loyalty, ...s.loyalty },
     news: { autoSend: { ...d.news.autoSend, ...(s.news?.autoSend || {}) } },
+    rates: { autoSend: { ...d.rates.autoSend, ...(s.rates?.autoSend || {}) } },
   };
 }
+export const isValidTime = v => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 
 export function patchV2Settings(s, body) {
   // `in` on a primitive (and property access on null) throws a TypeError, which
@@ -145,7 +148,18 @@ export function patchV2Settings(s, body) {
     const category = ['all', 'breaking', 'politics', 'economy', 'sports', 'tech', 'world'].includes(a.category) ? a.category : 'all';
     const interval = int(a.intervalMinutes, 10, 1440, 60);
     assert(interval !== undefined, 'invalid_news_interval');
-    s.news = { autoSend: { enabled: !!a.enabled, category, intervalMinutes: Number(interval), destinations: dest.map(d => typeof d === 'string' ? { chatId: str(d, 64), title: '' } : { chatId: str(d.chatId, 64), title: str(d.title, 64) }) } };
+    const time = a.time === '' || a.time === undefined ? '' : str(a.time, 5);
+    assert(!time || isValidTime(time), 'invalid_news_time');
+    s.news = { autoSend: { enabled: !!a.enabled, category, intervalMinutes: Number(interval), time, destinations: dest.map(d => typeof d === 'string' ? { chatId: str(d, 64), title: '' } : { chatId: str(d.chatId, 64), title: str(d.title, 64) }) } };
+  }
+  if (body.rates) {
+    const a = body.rates.autoSend || body.rates;
+    const dest = Array.isArray(a.destinations) ? a.destinations : s.rates.autoSend.destinations;
+    assert(dest.length <= 10 && dest.every(d => isChatId(typeof d === 'string' ? d : d.chatId)), 'invalid_destinations');
+    const category = ['all', 'gold', 'fiat', 'crypto'].includes(a.category) ? a.category : 'all';
+    const time = a.time === '' || a.time === undefined ? '' : str(a.time, 5);
+    assert(!time || isValidTime(time), 'invalid_rates_time');
+    s.rates = { autoSend: { enabled: !!a.enabled && !!time, category, time, destinations: dest.map(d => typeof d === 'string' ? { chatId: str(d, 64), title: '' } : { chatId: str(d.chatId, 64), title: str(d.title, 64) }) } };
   }
   if (body.loyalty) {
     const b = body.loyalty;

@@ -125,26 +125,45 @@ function tagButtons(rows, src) {
   return rows.map((row, r) => row.map((b, c) => ({ ...b, _src: src, _r: r, _c: c })));
 }
 
-export function inlineMarkup(menu, settings, lang, user = null) {
-  // The news-purpose bot is intentionally a focused two-option bot. Do not leak
-  // support, language, custom-menu or other module buttons into its home screen;
-  // administration remains available through /admin for the owner.
-  if (settings.botPurpose === 'news') {
-    return pageMarkup([[{
-      text: tr('🇮🇷 اخبار ایران', '🇮🇷 Iran News', lang),
-      type: 'callback', value: 'news:iran',
-    }, {
-      text: tr('🌍 اخبار کل جهان', '🌍 World News', lang),
-      type: 'callback', value: 'news:world',
-    }]], { withBack: false });
-  }
-  const custom = settings.botPurpose === 'custom' || menu.customized;
+export function customButtonsOf(menu) {
+  // Buttons the administrator actually defined in the panel. A fresh menu falls
+  // back to the stock defaults in storage, but a default-bot home must stay
+  // empty until the admin adds its own buttons.
+  if (!menu || !Array.isArray(menu.explicitInlineButtons)) return [];
+  return menu.explicitInlineButtons;
+}
+// The rows that make up the root (home) screen, shared by the inline markup and
+// by the `txt:` popup lookup so both always agree on positions.
+export function rootInlineRows(menu, settings, lang, user = null) {
   const adminRows = [];
   if (user && settings.adminId && String(user.id) === String(settings.adminId) && settings.publicBaseUrl) {
     adminRows.push([{ text: '🛠 ' + tr('پنل مدیریت (مینی‌اپ)', 'Admin Mini App', lang || 'fa'), type: 'web_app', web_app: { url: settings.publicBaseUrl } }]);
   }
-  const rows = withSupport([...adminRows, ...(custom && enabled(settings, 'menu') ? menu.inlineButtons : []), ...systemRows(settings, lang || 'fa')], settings, lang || 'fa');
-  return pageMarkup(tagButtons(rows, 'root'), { withBack: false });
+  // Default/custom bot: the home screen shows ONLY the buttons the administrator
+  // added through the panel's menu & button builder — nothing else.
+  if (settings.botPurpose === 'custom') return [...adminRows, ...customButtonsOf(menu)];
+  const custom = menu.customized;
+  return withSupport([...adminRows, ...(custom && enabled(settings, 'menu') ? menu.inlineButtons : []), ...systemRows(settings, lang || 'fa')], settings, lang || 'fa');
+}
+export function inlineMarkup(menu, settings, lang, user = null) {
+  // The news-purpose bot is a focused single-entry bot: one «خبر» button on the
+  // home screen; the region (Iran/World) and category pickers live one tap deep.
+  // No module buttons leak into its home; administration stays in /admin.
+  if (settings.botPurpose === 'news') {
+    return pageMarkup([[{
+      text: tr('📰 خبر', '📰 News', lang),
+      type: 'callback', value: 'news:home',
+    }]], { withBack: false });
+  }
+  // The rates-purpose bot is the same single-entry shape: one button opens the
+  // live price tables and their categories.
+  if (settings.botPurpose === 'rates') {
+    return pageMarkup([[{
+      text: tr('📈 قیمت دلار و طلا و تتر', '📈 USD, Gold & Tether Prices', lang),
+      type: 'callback', value: 'rates:home',
+    }]], { withBack: false });
+  }
+  return pageMarkup(tagButtons(rootInlineRows(menu, settings, lang || 'fa', user), 'root'), { withBack: false });
 }
 
 export async function touchUser(env, from) {
@@ -205,7 +224,14 @@ function systemRows(settings, lang) {
 
 export async function sendStart(token, chatId, user, menu, lang, settings) {
   const purpose = PURPOSES[settings.botPurpose] || PURPOSES.custom;
-  let welcome = settings.botPurpose === 'custom' || menu.customized ? renderTpl(menu.welcome[lang] || menu.welcome.fa, user) : `${tr('سلام', 'Hello', lang)} ${user.firstName || ''} 👋\n${lang === 'en' ? purpose.en : purpose.fa}\n${tr('از گزینه‌های زیر استفاده کنید.', 'Choose an option below.', lang)}`;
+  let welcome;
+  const customButtons = customButtonsOf(menu);
+  if (settings.botPurpose === 'custom' && !customButtons.length && !menu.customized) {
+    // A freshly created default bot has no buttons yet: don't promise a menu.
+    welcome = `${tr('سلام', 'Hello', lang)} ${user.firstName || ''} 👋\n${lang === 'en' ? purpose.en : purpose.fa}`;
+  } else {
+    welcome = settings.botPurpose === 'custom' || menu.customized ? renderTpl(menu.welcome[lang] || menu.welcome.fa, user) : `${tr('سلام', 'Hello', lang)} ${user.firstName || ''} 👋\n${lang === 'en' ? purpose.en : purpose.fa}\n${tr('از گزینه‌های زیر استفاده کنید.', 'Choose an option below.', lang)}`;
+  }
   if (settings.botPurpose === 'relay') welcome += '\n\n' + tr('پیام یا فایل خود را بفرستید تا طبق تنظیم مدیر، بدون برچسب فوروارد کپی شود. هویت فرستنده نزد مدیر قابل مشاهده است.', 'Send a message or file to copy it without forward attribution, as configured by the administrator. The administrator can see the sender’s identity.', lang);
   if (settings.botPurpose === 'group') welcome += '\n\n' + tr('ربات را ادمین گروه کنید و گروه را در پنل ثبت و فعال کنید. /id شناسه شما را نشان می‌دهد.', 'Add the bot as a group administrator, then register and enable the group in the panel. /id shows your ID.', lang);
   return sendToUser(token, chatId, welcome, { reply_markup: inlineMarkup(menu, settings, lang, user), disable_web_page_preview: true });
@@ -430,7 +456,7 @@ async function handleCallback(env, cb, token, settings) {
     // Custom menu buttons belong to the customized menu, not to the optional
     // "menu" module, so they keep working for every bot type/purpose.
     if (data.startsWith('sub:')) { await showPage(token, chatId, messageId, menu, data.slice(4), lang, settings, user); return answer(); }
-    if (data.startsWith('txt:')) { const [, src, r, c] = data.split(':'); const rows = src === 'root' ? menu.inlineButtons : menu.submenus?.[src]?.buttons || []; const btn = rows[+r]?.[+c]; return answer(btn?.type === 'text' ? String(btn.value).slice(0, 200) : '…', true); }
+    if (data.startsWith('txt:')) { const [, src, r, c] = data.split(':'); const rows = src === 'root' ? rootInlineRows(menu, settings, lang, user) : menu.submenus?.[src]?.buttons || []; const btn = rows[+r]?.[+c]; return answer(btn?.type === 'text' ? String(btn.value).slice(0, 200) : '…', true); }
     if (data === 'support:open' && enabled(settings, 'support')) { user.supportOpen = true; user.flow = null; await putUser(env, user); await sendToUser(token, chatId, T.supportIntro); return answer(); }
   } catch (e) { return answer(data.startsWith('vpn:') ? serviceError(e.message, lang) : checkoutError(e.message, lang), true); }
   return answer(tr('این بخش در نوع فعلی ربات فعال نیست.', 'This feature is disabled for this bot type.', lang), true);

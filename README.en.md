@@ -2,7 +2,7 @@
 
 <img src="assets/readme/botpanel-logo.svg" alt="BotPanel" width="120">
 
-# Telegram Bot Admin Panel — v3.1
+# Telegram Bot Admin Panel — v3.4
 
 **A bilingual admin panel for Telegram bots, shops, VPN/service businesses and a customer Mini App — running on Cloudflare Workers**
 
@@ -78,6 +78,18 @@ A single installation gives you:
 | Mini App | Telegram WebApp | Served from `/portal` |
 
 Key files: `src/index.js` (routes), `src/telegram.js` (bot logic), `src/services/` (service/VPN module), `public/` (panel and Mini App).
+
+</details>
+
+<details open>
+<summary><b>▸ What's new in v3.4</b></summary>
+
+- **Nation-wide news publisher (Iran + world):** one 📰 button after `/start`, then a choice between **Iran news** and **world news**; each opens its own categories (breaking, politics, economy, sports, tech). World headlines are **automatically translated to Persian** (30-day cache). Schedule delivery to channels/groups by a **fixed daily time** (Tehran) or a repeating interval.
+- **Clean custom/default bots:** a bot whose purpose is *Default/Custom* starts with **no buttons at all** until the admin adds buttons in *Menus & Buttons*; no system default buttons are shown, and an explicitly saved empty button list stays empty.
+- **One-button rates bot:** the rates purpose opens with a single **📈 USD, gold & Tether** button, then the asset categories; live table with 24h change, send-now, and a **daily scheduled publish** (asset type + Tehran time + destinations).
+- **Full `/admin` inside Telegram:** every control that exists in the web panel is available to the admin as glass buttons — stats, news, rates, menus & buttons, shop, broadcast, media, locks, webhook, tuning, services, tokens and more. Tapping a button **edits the same message in place** and reveals the next options; no new messages are stacked.
+- **Password on every panel entry:** the panel session no longer persists in localStorage; the password is required on every new tab/window or browser restart (Telegram mini-app login is unaffected).
+- **Regenerable screenshots:** run `npm run screenshots` to capture every README image from a fresh local build.
 
 </details>
 
@@ -271,6 +283,8 @@ If you use **Cloudflare's Git integration**, make sure it follows this repositor
 > 🔒 The default password is public knowledge, so complete this step **right after your first deployment**. For extra safety you can put the first release behind Cloudflare Access.
 
 Later password changes happen in **Settings → Security**.
+
+> 🔐 **Password on every entry (v3.4):** the panel session lives in the tab's temporary storage (sessionStorage), not in the browser's persistent storage. Opening the panel in a new tab or window — or restarting the browser — always asks for the password again. Admin login inside Telegram still works without a password via `initData` verification.
 
 </details>
 
@@ -858,9 +872,12 @@ If the support module is disabled, the customer sees a clear “support is not e
 | `/start p_<id>` | Jump straight to a product page (deep link) |
 | `/help` | Help text |
 | `/lang` | Switch language (bilingual mode) |
+| `/news` or `/khabar` | Nation-wide news: Iran news and world news (translated to Persian), by category |
+| `/rates`, `/price`, `/gold`, `/dollar`, `/arz` | Live gold, USD, Tether, coin and crypto prices |
+| `/admin` or `/panel` | The full glass admin panel inside Telegram for the owner (every panel section, edited in place) |
 | Support button | Opens a conversation with the admins |
 
-**Button behaviour (v3.1):**
+**Button behaviour (v3.1+):**
 
 - Tapping an inline button **edits the same message** with new text and buttons, so the chat stays clean.
 - Delivered content (files, configs, receipts, payment notices) is still sent as a new message so it remains in the chat history.

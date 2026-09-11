@@ -173,9 +173,12 @@ test('rates and news commands in private chat with back buttons', async () => {
   await h.msg(101, '/rates');
   assert(tg.sent().some(c => c.payload.text?.includes('قیمت لحظه‌ای طلا، ارز و رمزارزها')));
 
-  // /news command
+  // /news command opens the region picker (Iran | World) of the "خبر کل کشور" bot
   await h.msg(101, '/news');
-  assert(tg.sent().some(c => c.payload.text?.includes('پایگاه اخبار مهم کشور ایران')));
+  const newsMsg = tg.sent().filter(c => c.payload.text?.includes('خبر کل کشور')).pop();
+  assert(newsMsg, 'news home must announce the nation-wide news section');
+  const flat = (newsMsg.payload.reply_markup?.inline_keyboard || []).flat().map(b => b.callback_data || '');
+  assert(flat.includes('news:iran') && flat.includes('news:world'), 'region picker must offer Iran and World buttons');
 });
 
 test('product catalog search command (/search)', async () => {

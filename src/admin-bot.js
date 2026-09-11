@@ -8,13 +8,14 @@ import {
   getTicket, markTicketRead, ticketAppendAdmin, closeTicket,
 } from './kv.js';
 import { entityKey, allEntities } from './storage.js';
-import { str, int, isChatId, text as tr, assert, PURPOSES, MODULES, enabled } from './config.js';
+import { str, int, isChatId, text as tr, assert, PURPOSES, MODULES, enabled, isValidTime } from './config.js';
 import { sendToUser, resolveToken, tgApi } from './bot-api.js';
 import { NEWS_CATEGORIES, sendNewsDigest } from './news.js';
+import { RATES_CATEGORIES, RATES_SEND_CATS, sendRatesNow } from './rates.js';
 import { publishRelay } from './automation.js';
 import { patchV2Settings } from './config.js';
 import { createBroadcast } from './broadcast.js';
-import { getOrder, updateOrder, statusTitle } from './commerce.js';
+import { getOrder, updateOrder, statusTitle, validateProduct } from './commerce.js';
 
 export const isAdminUser = (env, settings, user) =>
   !!user && ((settings.adminId && String(user.id) === String(settings.adminId)) || (env.ADMIN_ID && String(user.id) === String(env.ADMIN_ID)));
@@ -43,6 +44,14 @@ const T = {
   userMessagePrompt: ['متن پیام برای این کاربر را بفرستید:', 'Send the message for this user:'],
   broadcastTextPrompt: ['متن پیام همگانی را بفرستید (حداکثر ۴۰۹۶ کاراکتر):', 'Send the broadcast text (max 4096 characters):'],
   faqPrompt: ['هر خط با قالب «سؤال | پاسخ» ارسال کنید:', 'Send one line in the format “Question | Answer”:'],
+  ratesDestPrompt: ['آیدی مقصدهای قیمت را بفرستید؛ هر خط: عنوان | آیدی\nمثال:\nکانال قیمت | @rateschannel\nگروه اقتصادی | -1001234567890', 'Send rate destinations; one per line: Title | ChatID'],
+  productAddPrompt: ['محصول جدید را با این قالب بفرستید:\nعنوان | قیمت (تومان)\nمثال:\nلایسنس ۱ماهه | 150000', 'Send the new product as: Title | Price (toman)'],
+  couponAddPrompt: ['کد تخفیف را با این قالب بفرستید:\nکد | نوع (percent یا amount) | مقدار\nمثال:\nOFF10 | percent | 10', 'Send the coupon as: CODE | percent|amount | value'],
+  lockSetPrompt: ['قفل کانال را با این قالب بفرستید:\nآیدی کانال | لینک عضویت\nبرای غیرفعال کردن فقط کلمه off را بفرستید.', 'Send the channel lock as: ChannelID | Join URL. Send "off" to disable.'],
+  sbTextPrompt: ['متن دکمه پشتیبانی را بفرستید؛ هر خط: متن فارسی | متن انگلیسی', 'Send the support button text; one line: Persian | English'],
+  tokenPrompt: ['توکن جدید ربات را بفرستید (از BotFather).', 'Send the new bot token (from BotFather).'],
+  notifyChatPrompt: ['آیدی چت اعلان سفارش را بفرستید؛ برای حذف، 0 بفرستید.', 'Send the order-notification chat ID; send 0 to clear.'],
+  cardPrompt: ['اطلاعات کارت بانکی را بفرستید؛ هر خط: شماره کارت | نام دارنده\nبرای پاک کردن فقط کلمه off را بفرستید.', 'Send the bank card as: CardNumber | Holder. Send "off" to clear.'],
 };
 const t2 = (key, lang) => tr(T[key]?.[0] || key, T[key]?.[1] || key, lang);
 
@@ -68,8 +77,19 @@ async function promptFlow(env, token, chatId, user, flow, text, lang, extra = {}
   await putUser(env, user);
   return sent;
 }
+// Follow-up steps of a text-input flow replace the prompt message itself, so the
+// admin conversation never stacks a new screen after every tap/entry.
+async function editPrompt(token, chatId, messageId, text, extra) {
+  if (messageId) {
+    const edited = await tgApi(token, 'editMessageText', { chat_id: chatId, message_id: messageId, text, ...extra });
+    if (edited.ok || /message is not modified/i.test(edited.description || '')) return edited;
+  }
+  return sendToUser(token, chatId, text, extra);
+}
 
-/* ============ Main admin screen ============ */
+/* ============ Main admin screen ============
+ * Every section of the web panel has a glass-button twin here. Taps refresh the
+ * open message in place — the admin chat never fills up with duplicate screens. */
 export async function adminHome(env, token, chatId, settings, lang = 'fa') {
   const url = settings.publicBaseUrl || env.PUBLIC_BASE_URL || '';
   const rows = [
@@ -83,31 +103,54 @@ export async function adminHome(env, token, chatId, settings, lang = 'fa') {
     ],
     [
       { text: '📰 ' + tr('مدیریت اخبار', 'News manager', lang), callback_data: 'adm:news' },
+      { text: '📈 ' + tr('نرخ‌ها و قیمت‌ها', 'Rates & prices', lang), callback_data: 'adm:rates' },
+    ],
+    [
       { text: '🪄 ' + tr('حذف فوروارد', 'Forward removal', lang), callback_data: 'adm:relay' },
-    ],
-    [
-      { text: '💬 ' + tr('پشتیبانی', 'Support', lang), callback_data: 'adm:support' },
-      { text: '📊 ' + tr('تعامل و نظرسنجی', 'Engagement', lang), callback_data: 'adm:engagement' },
-    ],
-    [
       { text: '🛒 ' + tr('فروش و سفارش‌ها', 'Shop & orders', lang), callback_data: 'adm:orders' },
+    ],
+    [
+      { text: '📦 ' + tr('محصولات', 'Products', lang), callback_data: 'adm:products' },
+      { text: '🎟 ' + tr('کدهای تخفیف', 'Coupons', lang), callback_data: 'adm:coupons' },
+    ],
+    [
       { text: '🎛 ' + tr('دکمه‌ها و منو', 'Buttons & menu', lang), callback_data: 'adm:menu' },
+      { text: '💬 ' + tr('پشتیبانی', 'Support', lang), callback_data: 'adm:support' },
     ],
     [
+      { text: '📊 ' + tr('تعامل و نظرسنجی', 'Engagement', lang), callback_data: 'adm:engagement' },
       { text: '🛡 ' + tr('گروه‌ها', 'Groups', lang), callback_data: 'adm:groups' },
-      { text: '📡 ' + tr('فیدها', 'Feeds', lang), callback_data: 'adm:feeds' },
     ],
     [
+      { text: '📡 ' + tr('فیدها', 'Feeds', lang), callback_data: 'adm:feeds' },
       { text: '❓ ' + tr('پرسش‌های متداول', 'FAQ', lang), callback_data: 'adm:faq' },
+    ],
+    [
       { text: '⭐ ' + tr('وفاداری و امتیاز', 'Loyalty & CRM', lang), callback_data: 'adm:crm' },
+      { text: '🖼 ' + tr('رسانه‌ها', 'Media', lang), callback_data: 'adm:media' },
+    ],
+    [
+      { text: '🔐 ' + tr('قفل کانال', 'Channel lock', lang), callback_data: 'adm:lock' },
+      { text: '🔌 ' + tr('وب‌هوک', 'Webhook', lang), callback_data: 'adm:webhook' },
+    ],
+    [
+      { text: '🎚 ' + tr('تنظیم ارسال همگانی', 'Broadcast tuning', lang), callback_data: 'adm:tuning' },
+      { text: '🛍 ' + tr('فروشگاه', 'Shop settings', lang), callback_data: 'adm:shop' },
+    ],
+    [
+      { text: '🔑 ' + tr('توکن ربات', 'Bot token', lang), callback_data: 'adm:token' },
+      { text: '🛡 ' + tr('دکمه پشتیبانی', 'Support button', lang), callback_data: 'adm:sb' },
+    ],
+    [
+      { text: '📡 ' + tr('سرویس‌ها (VPN)', 'Services (VPN)', lang), callback_data: 'adm:services' },
     ],
   ];
   if (url) rows.push([{ text: '🚀 ' + tr('پنل مدیریت (مینی‌اپ)', 'Admin Mini App', lang), web_app: { url } }]);
   rows.push(backRow(lang));
   return sendToUser(token, chatId,
     `🛠 <b>${tr('مدیریت ربات از تلگرام', 'Manage the bot from Telegram', lang)}</b>\n\n` +
-    tr('تمام بخش‌های قابل کنترل پنل وب از همین‌جا با دکمه‌های شیشه‌ای قابل مشاهده، ویرایش و ذخیره هستند.',
-      'All web-panel controls are available here with inline buttons, editing and saving.', lang),
+    tr('تمام بخش‌های قابل کنترل پنل وب از همین‌جا با دکمه‌های شیشه‌ای قابل مشاهده، ویرایش و ذخیره هستند؛ با هر انتخاب همین پیام ویرایش می‌شود و پیام جدیدی ساخته نمی‌گردد.',
+      'All web-panel controls are available here with inline buttons, editing and saving. Every tap edits this message in place — no new messages.', lang),
     { reply_markup: { inline_keyboard: rows }, disable_web_page_preview: true });
 }
 
@@ -172,6 +215,64 @@ async function newsIntervalScreen(env, token, chatId, settings, lang) {
   }
   rows.push([{ text: '🔙 ' + tr('بازگشت', 'Back', lang), callback_data: 'adm:news' }]);
   return sendToUser(token, chatId, tr('فاصله ارسال خودکار خبر (با انتخاب، ارسال خودکار روشن می‌شود):', 'Auto-send interval (picking one turns auto-send on):', lang), { reply_markup: { inline_keyboard: rows } });
+}
+
+/* ============ Rates (gold / dollar / crypto) manager ============ */
+async function ratesScreen(env, token, chatId, settings, lang) {
+  const cfg = settings.rates?.autoSend || {};
+  const state = await env.BOT_KV.get('v2:rates:state').then(v => v ? JSON.parse(v) : {});
+  const dest = cfg.destinations || [];
+  const catName = key => key === 'all' ? tr('همه (طلاب، ارز، کریپتو)', 'All (gold, FX, crypto)', lang) : (RATES_CATEGORIES[key] ? (lang === 'en' ? RATES_CATEGORIES[key].en : RATES_CATEGORIES[key].fa) : key);
+  const lines = [
+    `📈 <b>${tr('نرخ‌ها و قیمت‌ها', 'Rates & prices', lang)}</b>`,
+    '',
+    `${tr('ارسال خودکار', 'Auto-send', lang)}: ${onOff(cfg.enabled, lang)}`,
+    `${tr('نوع ارز', 'Asset type', lang)}: ${catName(cfg.category)}`,
+    `${tr('زمان روزانه', 'Daily time', lang)}: ${cfg.time || tr('ثبت نشده', 'none', lang)}`,
+    `${tr('مقصدها', 'Destinations', lang)}: ${dest.length ? dest.map(d => d.title || d.chatId).join('، ') : tr('ثبت نشده', 'none', lang)}`,
+    state.lastAt ? `🕐 ${tr('آخرین ارسال', 'Last send', lang)}: ${new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', dateStyle: 'short', timeStyle: 'short' }).format(state.lastAt)}` : '',
+    state.lastError ? `⚠️ ${state.lastError}` : '',
+    '',
+    tr('برای ارسال فوری، نوع ارز را انتخاب کنید:', 'Tap an asset type to send it right now:', lang),
+  ].filter(Boolean);
+  const rows = [
+    [
+      { text: '🪙 ' + tr('طلا و سکه', 'Gold', lang), callback_data: 'adm:rsend:gold' },
+      { text: '💵 ' + tr('ارزها', 'FX', lang), callback_data: 'adm:rsend:fiat' },
+      { text: '💎 ' + tr('کریپتو', 'Crypto', lang), callback_data: 'adm:rsend:crypto' },
+    ],
+    [{ text: '📊 ' + tr('جدول کامل', 'Full table', lang), callback_data: 'adm:rsend:all' }],
+    [
+      { text: '🕐 ' + (cfg.time ? cfg.time + ' — ' : '') + tr('زمان ارسال', 'Schedule time', lang), callback_data: 'adm:rtmenu' },
+      { text: '🎯 ' + catName(cfg.category), callback_data: 'adm:rcatmenu' },
+    ],
+    [
+      { text: `${cfg.enabled ? '⏸' : '▶️'} ${tr('ارسال خودکار', 'Auto-send', lang)}: ${onOff(cfg.enabled, lang)}`, callback_data: 'adm:rauto' },
+      { text: `📡 ${tr('مقصدها', 'Destinations', lang)} (${dest.length})`, callback_data: 'adm:rddest' },
+    ],
+    backRow(lang),
+  ];
+  return sendToUser(token, chatId, lines.join('\n'), { reply_markup: { inline_keyboard: rows } });
+}
+
+async function ratesCatPickScreen(env, token, chatId, settings, lang) {
+  const rows = [[{ text: '📊 ' + tr('همه (طلاب، ارز، کریپتو)', 'All (gold, FX, crypto)', lang), callback_data: 'adm:rcat:all' }]];
+  for (const [key, cat] of Object.entries(RATES_CATEGORIES)) {
+    rows.push([{ text: lang === 'en' ? cat.en : cat.fa, callback_data: `adm:rcat:${key}` }]);
+  }
+  rows.push([{ text: '🔙 ' + tr('بازگشت', 'Back', lang), callback_data: 'adm:rates' }]);
+  return sendToUser(token, chatId, tr('نوع ارزی که هر روز ارسال شود را انتخاب کنید:', 'Choose which asset type to publish daily:', lang), { reply_markup: { inline_keyboard: rows } });
+}
+
+async function ratesTimeScreen(env, token, chatId, settings, lang) {
+  const times = ['06:00', '09:00', '12:00', '15:00', '18:00', '21:00'];
+  const rows = [];
+  for (let i = 0; i < times.length; i += 2) {
+    rows.push(times.slice(i, i + 2).map(t => ({ text: '🕐 ' + t, callback_data: `adm:rt:${t}` })));
+  }
+  rows.push([{ text: settings.rates?.autoSend?.time ? '⏸ ' + tr('بدون زمان مشخص (خاموش)', 'No daily time (off)', lang) : '✅ ' + tr('حذف زمان', 'Remove time', lang), callback_data: 'adm:rt:off' }]);
+  rows.push([{ text: '🔙 ' + tr('بازگشت', 'Back', lang), callback_data: 'adm:rates' }]);
+  return sendToUser(token, chatId, tr('ساعت روزانه ارسال قیمت در زمان‌بندی تهران را انتخاب کنید:', 'Choose the daily delivery time (Tehran):', lang), { reply_markup: { inline_keyboard: rows } });
 }
 
 /* ============ Forward-removal (relay) manager ============ */
@@ -305,6 +406,29 @@ const errText = (e, lang) => ({
   news_empty: tr('فعلاً خبر تازه‌ای برای این دسته پیدا نشد؛ بعداً تلاش کنید.', 'No fresh news found for this category right now; try again later.', lang),
   module_disabled: tr('این ماژول در نوع فعلی ربات غیرفعال است.', 'This module is disabled for the current bot type.', lang),
   token_missing: tr('ابتدا توکن ربات را در پنل ثبت کنید.', 'Set the bot token in the panel first.', lang),
+  invalid_product: tr('قالب محصول صحیح نیست؛ «عنوان | قیمت» بفرستید.', 'Bad product format; send “Title | Price”.', lang),
+  invalid_coupon: tr('قالب کد تخفیف صحیح نیست؛ «CODE | percent|amount | مقدار» بفرستید.', 'Bad coupon format; send “CODE | percent|amount | value”.', lang),
+  invalid_card_number: tr('شماره کارت باید ۱۶ رقم باشد.', 'The card number must have 16 digits.', lang),
+  invalid_join_url: tr('لینک عضویت باید با https شروع شود.', 'The join URL must start with https.', lang),
+  invalid_chat_id: tr('آیدی چت معتبر نیست.', 'Invalid chat ID.', lang),
+  invalid_bot_token: tr('فرمت توکن معتبر نیست (123:ABC…).', 'The token format is invalid (123:ABC…).', lang),
+  invalid_admin_id: tr('آیدی عددی معتبر نیست.', 'Invalid numeric ID.', lang),
+  invalid_text: tr('متن معتبر نیست.', 'Invalid text.', lang),
+  invalid_faq: tr('قالب سؤال و پاسخ صحیح نیست؛ «سؤال | پاسخ» بفرستید.', 'Bad FAQ format; send “Question | Answer”.', lang),
+  invalid_news_time: tr('ساعت معتبر نیست (فرمت 09:00).', 'Invalid time (use HH:MM).', lang),
+  invalid_rates_time: tr('ساعت معتبر نیست (فرمت 09:00).', 'Invalid time (use HH:MM).', lang),
+  telegram_connection_failed: tr('اتصال به تلگرام ناموفق بود؛ توکن را بررسی کنید.', 'Telegram connection failed; check the token.', lang),
+  webhook_secret_missing: tr('متغیر WEBHOOK_SECRET در محیط تنظیم نشده است.', 'WEBHOOK_SECRET is not configured in the environment.', lang),
+  public_url_required: tr('آدرس عمومی پنل (PUBLIC_BASE_URL) تنظیم نشده است.', 'The public panel URL (PUBLIC_BASE_URL) is not configured.', lang),
+  lock_needs_targets: tr('ابتدا با «ویرایش کانال» یک کانال ثبت کنید.', 'Register a channel with “Edit channel” first.', lang),
+  product_not_found: tr('محصول پیدا نشد.', 'Product not found.', lang),
+  coupon_not_found: tr('کد تخفیف پیدا نشد.', 'Coupon not found.', lang),
+  user_not_found: tr('کاربر پیدا نشد.', 'User not found.', lang),
+  group_not_found: tr('گروه پیدا نشد.', 'Group not found.', lang),
+  feed_not_found: tr('فید پیدا نشد.', 'Feed not found.', lang),
+  faq_not_found: tr('مورد پیدا نشد.', 'Entry not found.', lang),
+  invalid_purpose: tr('نوع ربات معتبر نیست.', 'Invalid bot purpose.', lang),
+  invalid_modules: tr('ماژول معتبر نیست.', 'Invalid module.', lang),
 }[e.message] || e.message);
 
 
@@ -468,6 +592,155 @@ async function crmScreen(env, token, chatId, lang) {
   return sendToUser(token, chatId, text, { reply_markup: { inline_keyboard: adminRows([[{ text: settings.loyalty.enabled ? '⏸ ' + tr('خاموش کردن', 'Disable', lang) : '▶️ ' + tr('روشن کردن', 'Enable', lang), callback_data: 'adm:crm.toggle' }]], lang) } });
 }
 
+/* ============ More web-panel parity screens ============ */
+async function productsScreen(env, token, chatId, lang) {
+  const products = (await allEntities(env, 'product')).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 12);
+  const rows = products.map(p => [{ text: `${p.hidden ? '⏸' : '📦'} ${String(p.title).slice(0, 32)} · ${p.price}`, callback_data: `adm:prod:${p.id}` }]);
+  rows.push([
+    { text: '➕ ' + tr('افزودن محصول', 'Add product', lang), callback_data: 'adm:prodadd' },
+    { text: '🔄 ' + tr('به‌روزرسانی', 'Refresh', lang), callback_data: 'adm:products' },
+  ]);
+  return sendToUser(token, chatId,
+    `📦 <b>${tr('محصولات فروشگاه', 'Store products', lang)}</b>\n\n` +
+    (products.length ? tr('محصول را برای مشاهده و ویرایش انتخاب کنید:', 'Choose a product to view or edit:', lang) : tr('محصولی ثبت نشده است.', 'No products yet.', lang)),
+    { reply_markup: { inline_keyboard: adminRows(rows, lang) } });
+}
+
+async function productScreen(env, token, chatId, id, lang) {
+  const p = await env.BOT_KV.get(entityKey('product', id)).then(v => v ? JSON.parse(v) : null);
+  if (!p) return productsScreen(env, token, chatId, lang);
+  const text = `📦 <b>${String(p.title).slice(0, 120)}</b>\n\n` +
+    `💰 ${tr('قیمت', 'Price', lang)}: ${p.price}\n📊 ${tr('موجودی', 'Stock', lang)}: ${p.stock === -1 ? tr('نامحدود', 'unlimited', lang) : p.stock}\n` +
+    `🚚 ${tr('تحویل', 'Delivery', lang)}: ${p.deliveryMode}\n${p.hidden ? '⏸ ' + tr('مخفی', 'Hidden', lang) : '✅ ' + tr('فعال', 'Active', lang)}`;
+  const rows = [
+    [{ text: p.hidden ? '▶️ ' + tr('نمایش', 'Show', lang) : '⏸ ' + tr('مخفی کردن', 'Hide', lang), callback_data: `adm:prodtoggle:${id}` }, { text: '🗑 ' + tr('حذف', 'Delete', lang), callback_data: `adm:proddelete:${id}` }],
+  ];
+  return sendToUser(token, chatId, text, { reply_markup: { inline_keyboard: adminRows(rows, lang) } });
+}
+
+async function couponsScreen(env, token, chatId, lang) {
+  const coupons = (await allEntities(env, 'coupon')).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 12);
+  const rows = coupons.map(c => [{ text: `${c.hidden ? '⏸' : '🎟'} ${c.code} · ${c.type === 'percent' ? c.value + '%' : c.value}`, callback_data: `adm:coupon:${c.id}` }]);
+  rows.push([
+    { text: '➕ ' + tr('کد تخفیف جدید', 'New coupon', lang), callback_data: 'adm:couponadd' },
+    { text: '🔄 ' + tr('به‌روزرسانی', 'Refresh', lang), callback_data: 'adm:coupons' },
+  ]);
+  return sendToUser(token, chatId,
+    `🎟 <b>${tr('کدهای تخفیف', 'Discount coupons', lang)}</b>\n\n` +
+    (coupons.length ? tr('یک کد را انتخاب کنید:', 'Choose a coupon:', lang) : tr('کدی ثبت نشده است.', 'No coupons yet.', lang)),
+    { reply_markup: { inline_keyboard: adminRows(rows, lang) } });
+}
+
+async function couponScreen(env, token, chatId, id, lang) {
+  const c = await env.BOT_KV.get(entityKey('coupon', id)).then(v => v ? JSON.parse(v) : null);
+  if (!c) return couponsScreen(env, token, chatId, lang);
+  const text = `🎟 <b>${c.code}</b>\n\n${tr('نوع', 'Type', lang)}: ${c.type} · ${c.value}\n${tr('استفاده', 'Used', lang)}: ${c.used || 0}/${c.maxUses || '—'}\n${c.hidden ? '⏸ ' + tr('مخفی', 'Hidden', lang) : '✅ ' + tr('فعال', 'Active', lang)}`;
+  const rows = [[
+    { text: c.hidden ? '▶️ ' + tr('فعال کردن', 'Enable', lang) : '⏸ ' + tr('غیرفعال کردن', 'Disable', lang), callback_data: `adm:coupon:${id}:${c.hidden ? 'on' : 'off'}` },
+    { text: '🗑 ' + tr('حذف', 'Delete', lang), callback_data: `adm:coupon:${id}:del` },
+  ]];
+  return sendToUser(token, chatId, text, { reply_markup: { inline_keyboard: adminRows(rows, lang) } });
+}
+
+async function mediaScreen(env, token, chatId, lang) {
+  const rows = (await allEntities(env, 'media')).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 12);
+  const kb = rows.map(m => [{ text: `${m.kind === 'photo' ? '🖼' : '📄'} ${String(m.name).slice(0, 32)}`, callback_data: `adm:media:${m.id}` }]);
+  kb.push([{ text: '🔄 ' + tr('به‌روزرسانی', 'Refresh', lang), callback_data: 'adm:media' }]);
+  return sendToUser(token, chatId,
+    `🖼 <b>${tr('رسانه‌های آپلودشده', 'Uploaded media', lang)}</b>\n\n` +
+    (rows.length ? tr('فایل را برای حذف انتخاب کنید:', 'Choose a file to delete:', lang) : tr('فایلی آپلود نشده است.', 'No media uploaded.', lang)),
+    { reply_markup: { inline_keyboard: adminRows(kb, lang) } });
+}
+
+async function mediaItemScreen(env, token, chatId, id, lang) {
+  const m = await env.BOT_KV.get(entityKey('media', id)).then(v => v ? JSON.parse(v) : null);
+  if (!m) return mediaScreen(env, token, chatId, lang);
+  const text = `🖼 <b>${String(m.name).slice(0, 120)}</b>\n\n${m.kind} · ${((m.size || 0) / 1024 / 1024).toFixed(2)} MB\n🕐 ${dateText(m.createdAt, lang)}`;
+  const rows = [[{ text: '🗑 ' + tr('حذف فایل', 'Delete file', lang), callback_data: `adm:mediadel:${id}` }]];
+  return sendToUser(token, chatId, text, { reply_markup: { inline_keyboard: adminRows(rows, lang) } });
+}
+
+async function lockScreen(env, token, chatId, settings, lang) {
+  const rc = settings.requiredChats || {}, legacy = settings.requiredChannel || {};
+  const targets = rc.targets || (legacy.enabled && legacy.chatId ? [{ chatId: legacy.chatId, url: legacy.url, title: '' }] : []);
+  const text = `🔐 <b>${tr('قفل عضویت کانال', 'Channel membership lock', lang)}</b>\n\n` +
+    `${tr('وضعیت', 'Status', lang)}: ${rc.enabled ? tr('روشن ✅', 'On ✅', lang) : tr('خاموش ❌', 'Off ❌', lang)}\n` +
+    (targets.length ? targets.map(t => `${t.title || t.chatId}${t.url ? ' · ' + t.url : ''}`).join('\n') : tr('کانالی ثبت نشده است.', 'No channel configured.', lang));
+  const rows = [
+    [{ text: rc.enabled ? '⏸ ' + tr('غیرفعال کردن قفل', 'Disable lock', lang) : '▶️ ' + tr('روشن کردن قفل', 'Enable lock', lang), callback_data: 'adm:locktoggle' },
+     { text: '📝 ' + tr('ویرایش کانال', 'Edit channel', lang), callback_data: 'adm:lockset' }],
+  ];
+  return sendToUser(token, chatId, text, { reply_markup: { inline_keyboard: adminRows(rows, lang) } });
+}
+
+async function webhookScreen(env, token, chatId, settings, lang, editId = null) {
+  const tk = await resolveToken(env);
+  let info = null, error = '';
+  if (tk) {
+    try { info = await tgApi(token, 'getWebhookInfo'); } catch { error = tr('خطای شبکه', 'network error', lang); }
+  }
+  const url = info?.result?.url || '';
+  const text = `🔌 <b>${tr('مدیریت وب‌هوک', 'Webhook management', lang)}</b>\n\n` +
+    (tk ? (url ? `🔗 ${url}\n${info.result.pending_update_count !== undefined ? `📮 ${tr('به‌روزرسانی‌های در انتظار', 'Pending updates', lang)}: ${info.result.pending_update_count}` : ''}` : tr('وب‌هوک تنظیم نشده است.', 'No webhook configured.', lang)) : tr('توکن ربات ثبت نشده است؛ ابتدا توکن را تنظیم کنید.', 'No bot token saved; set it first.', lang)) +
+    (error ? `\n⚠️ ${error}` : '');
+  const rows = tk ? [
+    [{ text: '🔌 ' + tr('تنظیم وب‌هوک', 'Set webhook', lang), callback_data: 'adm:whset' },
+     { text: '🗑 ' + tr('حذف وب‌هوک', 'Delete webhook', lang), callback_data: 'adm:whdel' }],
+  ] : [];
+  const extra = { reply_markup: { inline_keyboard: adminRows(rows, lang) } };
+  if (editId) { const edited = await tgApi(token, 'editMessageText', { chat_id: chatId, message_id: editId, text, ...extra }); if (edited.ok) return edited; }
+  return sendToUser(token, chatId, text, extra);
+}
+
+async function tuningScreen(env, token, chatId, settings, lang) {
+  const b = settings.broadcast || {};
+  const text = `🎚 <b>${tr('تنظیم ارسال همگانی', 'Broadcast tuning', lang)}</b>\n\n` +
+    `📦 ${tr('حجم هر دسته', 'Batch size', lang)}: ${b.batchSize || 25}\n⏱ ${tr('تأخیر بین دسته‌ها', 'Delay between batches', lang)}: ${b.delayMs || 40} ms`;
+  const rows = [
+    [{ text: `📦 ${tr('حجم', 'Batch', lang)}: ${b.batchSize || 25}`, callback_data: 'adm:batch' },
+     { text: `⏱ ${tr('تأخیر', 'Delay', lang)}: ${b.delayMs || 40}ms`, callback_data: 'adm:delay' }],
+  ];
+  return sendToUser(token, chatId, text, { reply_markup: { inline_keyboard: adminRows(rows, lang) } });
+}
+
+async function shopScreen(env, token, chatId, settings, lang) {
+  const s = settings.shop || {};
+  const text = `🛍 <b>${tr('تنظیمات فروشگاه', 'Shop settings', lang)}</b>\n\n` +
+    `💳 ${tr('روش پرداخت', 'Payment', lang)}: ${s.payment === 'zarinpal' ? 'Zarinpal' : tr('کارت‌به‌کارت دستی', 'manual card-to-card', lang)}\n` +
+    `🔖 ${tr('کارت بانکی', 'Card', lang)}: ${s.cardNumber ? `${'•'.repeat(8)}${s.cardNumber.slice(-4)} — ${s.cardHolder || '—'}` : tr('ثبت نشده', 'none', lang)}\n` +
+    `🧾 ${tr('آدرس الزامی', 'Require address', lang)}: ${onOff(s.requireAddress, lang)}\n` +
+    `🛡 ${tr('محافظت محتوا', 'Protect content', lang)}: ${onOff(s.protectContent, lang)}\n` +
+    `📢 ${tr('چت اعلان سفارش', 'Order notify chat', lang)}: ${s.notifyChatId || '—'}`;
+  const rows = [
+    [{ text: '💳 ' + tr('روش پرداخت', 'Payment', lang), callback_data: 'adm:shpay' },
+     { text: '🧾 ' + tr('آدرس الزامی', 'Address', lang), callback_data: 'adm:shaddr' }],
+    [{ text: '🔖 ' + tr('کارت بانکی', 'Card', lang), callback_data: 'adm:shcard' },
+     { text: '🛡 ' + tr('محافظت محتوا', 'Protect', lang), callback_data: 'adm:shprotect' }],
+    [{ text: '📢 ' + tr('چت اعلان سفارش', 'Notify chat', lang), callback_data: 'adm:shnotify' }],
+  ];
+  return sendToUser(token, chatId, text, { reply_markup: { inline_keyboard: adminRows(rows, lang) } });
+}
+
+async function tokenScreen(env, token, chatId, settings, lang) {
+  const cur = settings.botToken || env.BOT_TOKEN || '';
+  const text = `🔑 <b>${tr('توکن ربات', 'Bot token', lang)}</b>\n\n` +
+    (cur ? `✓ ${'•'.repeat(8)}${String(cur).slice(-4)} (${settings.botToken ? tr('ذخیره‌شده در پنل', 'stored in panel', lang) : tr('از متغیر محیطی', 'from environment', lang)})` : tr('توکنی ثبت نشده است.', 'No token saved yet.', lang)) +
+    `\n\n${tr('با ارسال توکن تازه، هویت ربات با BotFather راستی‌آزمایی می‌شود.', 'A new token is verified against BotFather before saving.', lang)}`;
+  const rows = [[{ text: '🔄 ' + tr('تغییر توکن', 'Change token', lang), callback_data: 'adm:tokenset' }]];
+  return sendToUser(token, chatId, text, { reply_markup: { inline_keyboard: adminRows(rows, lang) } });
+}
+
+async function servicesScreen(env, token, chatId, settings, lang) {
+  const url = settings.publicBaseUrl || env.PUBLIC_BASE_URL || '';
+  const text = `📡 <b>${tr('سرویس و VPN', 'Services & VPN', lang)}</b>\n\n` +
+    (enabled(settings, 'services')
+      ? tr('اتصال پنل‌ها، پلن‌ها، انبار کانفیگ، کیف پول و نمایندگی در کارگاه پنل (بخش سرویس‌ها) مدیریت می‌شوند.', 'Panel connections, plans, config warehouse, wallet and agents are managed in the web panel workspace (Services section).', lang)
+      : tr('ماژول سرویس در نوع فعلی ربات فعال نیست؛ از «تنظیمات اصلی» نوع ربات را تغییر دهید.', 'The services module is disabled for this bot type; change the bot purpose in Bot settings.', lang)) +
+    (url ? `\n\n${tr('برای دسترسی کامل، پنل را از دکمه زیر باز کنید.', 'For full control, open the panel from the button below.', lang)}` : '');
+  const rows = url ? [[{ text: '🚀 ' + tr('پنل مدیریت (مینی‌اپ)', 'Admin Mini App', lang), web_app: { url } }]] : [];
+  return sendToUser(token, chatId, text, { reply_markup: { inline_keyboard: adminRows(rows, lang) }, disable_web_page_preview: true });
+}
+
 /* ============ Callback router ============ */
 export async function adminCallback(env, cb, token, user, settings, lang, { answer }) {
   const data = String(cb.data || '');
@@ -559,6 +832,159 @@ export async function adminCallback(env, cb, token, user, settings, lang, { answ
     if (data === 'adm:crm.toggle') {
       const s = await getSettings(env); s.loyalty.enabled = !s.loyalty.enabled; await saveSettings(env, s); await answer(t2('saved', lang)); await crmScreen(env, token, chatId, lang); return true;
     }
+    if (data === 'adm:rates' || data.startsWith('adm:rauto') || data.startsWith('adm:rsend:') || data.startsWith('adm:rcat:') || data.startsWith('adm:rt:')) {
+      return await handleRates(env, token, chatId, user, lang, data, answer);
+    }
+    if (data === 'adm:rtmenu') { await ratesTimeScreen(env, token, chatId, await getSettings(env), lang); return true; }
+    if (data === 'adm:rcatmenu') { await ratesCatPickScreen(env, token, chatId, await getSettings(env), lang); return true; }
+    if (data === 'adm:rddest') {
+      await answer();
+      await promptFlow(env, token, chatId, user, { type: 'adm_rates_dest' }, t2('ratesDestPrompt', lang), lang);
+      return true;
+    }
+    if (data === 'adm:products') { await productsScreen(env, token, chatId, lang); return true; }
+    if (data.startsWith('adm:prod:')) { await productScreen(env, token, chatId, data.slice('adm:prod:'.length), lang); return true; }
+    if (data === 'adm:prodadd') {
+      await answer();
+      await promptFlow(env, token, chatId, user, { type: 'adm_product_add' }, t2('productAddPrompt', lang), lang);
+      return true;
+    }
+    if (data.startsWith('adm:prodtoggle:')) {
+      const id = data.slice('adm:prodtoggle:'.length), p = await env.BOT_KV.get(entityKey('product', id)).then(v => v ? JSON.parse(v) : null);
+      assert(p, 'product_not_found'); p.hidden = !p.hidden; p.updatedAt = Date.now(); await env.BOT_KV.put(entityKey('product', id), JSON.stringify(p));
+      await answer(t2('saved', lang)); await productScreen(env, token, chatId, id, lang); return true;
+    }
+    if (data.startsWith('adm:proddelete:')) {
+      const id = data.slice('adm:proddelete:'.length), p = await env.BOT_KV.get(entityKey('product', id)).then(v => v ? JSON.parse(v) : null);
+      assert(p, 'product_not_found');
+      const used = (await allEntities(env, 'order')).some(o => (o.items || []).some(i => i.id === id));
+      if (used) { p.hidden = true; await env.BOT_KV.put(entityKey('product', id), JSON.stringify(p)); }
+      else await env.BOT_KV.delete(entityKey('product', id));
+      await answer(t2('btnDeleted', lang)); await productsScreen(env, token, chatId, lang); return true;
+    }
+    if (data === 'adm:coupons') { await couponsScreen(env, token, chatId, lang); return true; }
+    if (data.startsWith('adm:coupon:')) {
+      const [, , id, action] = data.split(':');
+      if (!action) { await couponScreen(env, token, chatId, id, lang); return true; }
+      const c = await env.BOT_KV.get(entityKey('coupon', id)).then(v => v ? JSON.parse(v) : null);
+      assert(c, 'coupon_not_found');
+      if (action === 'on' || action === 'off') { c.hidden = action === 'off'; await env.BOT_KV.put(entityKey('coupon', id), JSON.stringify(c)); await answer(t2('saved', lang)); await couponScreen(env, token, chatId, id, lang); return true; }
+      await env.BOT_KV.delete(entityKey('coupon', id));
+      await answer(t2('btnDeleted', lang)); await couponsScreen(env, token, chatId, lang); return true;
+    }
+    if (data === 'adm:couponadd') {
+      await answer();
+      await promptFlow(env, token, chatId, user, { type: 'adm_coupon_add' }, t2('couponAddPrompt', lang), lang);
+      return true;
+    }
+    if (data === 'adm:media') { await mediaScreen(env, token, chatId, lang); return true; }
+    if (data.startsWith('adm:media:')) { await mediaItemScreen(env, token, chatId, data.slice('adm:media:'.length), lang); return true; }
+    if (data.startsWith('adm:mediadel:')) {
+      await env.BOT_KV.delete(entityKey('media', data.slice('adm:mediadel:'.length)));
+      await answer(t2('btnDeleted', lang)); await mediaScreen(env, token, chatId, lang); return true;
+    }
+    if (data === 'adm:lock') { await lockScreen(env, token, chatId, await getSettings(env), lang); return true; }
+    if (data === 'adm:locktoggle') {
+      const s = await getSettings(env);
+      const rc = s.requiredChats || { enabled: false, targets: [] };
+      if (!rc.enabled) assert((rc.targets || []).length, 'lock_needs_targets');
+      await patch(env, { requiredChats: { ...rc, enabled: !rc.enabled } });
+      await answer(t2('saved', lang)); await lockScreen(env, token, chatId, await getSettings(env), lang); return true;
+    }
+    if (data === 'adm:lockset') {
+      await answer();
+      await promptFlow(env, token, chatId, user, { type: 'adm_lock_set' }, t2('lockSetPrompt', lang), lang);
+      return true;
+    }
+    if (data === 'adm:webhook') { await webhookScreen(env, token, chatId, await getSettings(env), lang); return true; }
+    if (data === 'adm:whset' || data === 'adm:whdel') {
+      const tk = await resolveToken(env);
+      assert(tk, 'token_missing');
+      let res;
+      if (data === 'adm:whdel') res = await tgApi(tk, 'deleteWebhook', { drop_pending_updates: false });
+      else {
+        assert(env.WEBHOOK_SECRET, 'webhook_secret_missing');
+        const base = env.MANAGED_BASE_URL || env.PUBLIC_BASE_URL || '';
+        assert(base, 'public_url_required');
+        res = await tgApi(tk, 'setWebhook', {
+          url: `${String(base).replace(/\/$/, '')}/telegram/webhook`,
+          secret_token: env.WEBHOOK_SECRET,
+          allowed_updates: ['message', 'edited_message', 'callback_query', 'channel_post', 'my_chat_member', 'chat_member', 'pre_checkout_query'],
+          drop_pending_updates: false,
+        });
+      }
+      assert(res.ok, res.description || 'telegram_error');
+      await answer(t2('saved', lang)); await webhookScreen(env, token, chatId, await getSettings(env), lang); return true;
+    }
+    if (data === 'adm:tuning') { await tuningScreen(env, token, chatId, await getSettings(env), lang); return true; }
+    if (data === 'adm:batch') {
+      const s = await getSettings(env), sizes = [10, 15, 20, 25, 35, 50], next = sizes[(sizes.indexOf(s.broadcast.batchSize) + 1) % sizes.length];
+      s.broadcast.batchSize = next; await saveSettings(env, s);
+      await answer(`📦 ${t2('saved', lang)} ${next}`); await tuningScreen(env, token, chatId, await getSettings(env), lang); return true;
+    }
+    if (data === 'adm:delay') {
+      const s = await getSettings(env), delays = [20, 40, 80, 120, 200], next = delays[(delays.indexOf(s.broadcast.delayMs) + 1) % delays.length];
+      s.broadcast.delayMs = next; await saveSettings(env, s);
+      await answer(`⏱ ${t2('saved', lang)} ${next}ms`); await tuningScreen(env, token, chatId, await getSettings(env), lang); return true;
+    }
+    if (data === 'adm:shop') { await shopScreen(env, token, chatId, await getSettings(env), lang); return true; }
+    if (data === 'adm:shpay') {
+      const s = await getSettings(env);
+      s.shop.payment = s.shop.payment === 'zarinpal' ? 'manual' : 'zarinpal';
+      await saveSettings(env, s); await answer(t2('saved', lang)); await shopScreen(env, token, chatId, await getSettings(env), lang); return true;
+    }
+    if (data === 'adm:shaddr') {
+      const s = await getSettings(env); s.shop.requireAddress = !s.shop.requireAddress; await saveSettings(env, s);
+      await answer(t2('saved', lang)); await shopScreen(env, token, chatId, await getSettings(env), lang); return true;
+    }
+    if (data === 'adm:shprotect') {
+      const s = await getSettings(env); s.shop.protectContent = !s.shop.protectContent; await saveSettings(env, s);
+      await answer(t2('saved', lang)); await shopScreen(env, token, chatId, await getSettings(env), lang); return true;
+    }
+    if (data === 'adm:shcard') {
+      await answer();
+      await promptFlow(env, token, chatId, user, { type: 'adm_shop_card' }, t2('cardPrompt', lang), lang);
+      return true;
+    }
+    if (data === 'adm:shnotify') {
+      await answer();
+      await promptFlow(env, token, chatId, user, { type: 'adm_shop_notify' }, t2('notifyChatPrompt', lang), lang);
+      return true;
+    }
+    if (data === 'adm:token') { await tokenScreen(env, token, chatId, await getSettings(env), lang); return true; }
+    if (data === 'adm:tokenset') {
+      await answer();
+      await promptFlow(env, token, chatId, user, { type: 'adm_token_set' }, t2('tokenPrompt', lang), lang);
+      return true;
+    }
+    if (data === 'adm:sb') {
+      const s = await getSettings(env), sb = s.supportButton || {};
+      const text = `🛡 <b>${tr('دکمه پشتیبانی', 'Support button', lang)}</b>\n\n${tr('وضعیت', 'Status', lang)}: ${onOff(sb.enabled !== false, lang)}\n🇷 ${sb.fa || ''}\n🇬🇧 ${sb.en || ''}`;
+      const rows = [
+        [{ text: sb.enabled === false ? '▶️ ' + tr('فعال کردن', 'Enable', lang) : '⏸ ' + tr('غیرفعال کردن', 'Disable', lang), callback_data: 'adm:sbtoggle' },
+         { text: '📝 ' + tr('متن دکمه', 'Edit text', lang), callback_data: 'adm:sbtext' }],
+      ];
+      return sendToUser(token, chatId, text, { reply_markup: { inline_keyboard: adminRows(rows, lang) } });
+    }
+    if (data === 'adm:sbtoggle') {
+      const s = await getSettings(env);
+      s.supportButton = { ...(s.supportButton || {}), enabled: s.supportButton?.enabled === false ? true : false };
+      await saveSettings(env, s); await answer(t2('saved', lang));
+      const sb = s.supportButton || {};
+      const text = `🛡 <b>${tr('دکمه پشتیبانی', 'Support button', lang)}</b>\n\n${tr('وضعیت', 'Status', lang)}: ${onOff(sb.enabled !== false, lang)}\n🇷 ${sb.fa || ''}\n🇬🇧 ${sb.en || ''}`;
+      const rows = [
+        [{ text: sb.enabled === false ? '▶️ ' + tr('فعال کردن', 'Enable', lang) : '⏸ ' + tr('غیرفعال کردن', 'Disable', lang), callback_data: 'adm:sbtoggle' },
+         { text: '📝 ' + tr('متن دکمه', 'Edit text', lang), callback_data: 'adm:sbtext' }],
+      ];
+      await sendToUser(token, chatId, text, { reply_markup: { inline_keyboard: adminRows(rows, lang) } });
+      return true;
+    }
+    if (data === 'adm:sbtext') {
+      await answer();
+      await promptFlow(env, token, chatId, user, { type: 'adm_sb_text' }, t2('sbTextPrompt', lang), lang);
+      return true;
+    }
+    if (data === 'adm:services') { await servicesScreen(env, token, chatId, await getSettings(env), lang); return true; }
     if (data === 'adm:news' || data.startsWith('adm:nauto') || data.startsWith('adm:nsend:') || data.startsWith('adm:ncat:') || data.startsWith('adm:nint:')) {
       return await handleNews(env, token, chatId, user, lang, data, answer);
     }
@@ -686,6 +1112,48 @@ async function handleNews(env, token, chatId, user, lang, data, answer) {
   return true;
 }
 
+async function handleRates(env, token, chatId, user, lang, data, answer) {
+  const settings = await getSettings(env);
+  const cfg = settings.rates?.autoSend || { enabled: false, category: 'all', time: '09:00', destinations: [] };
+  if (data.startsWith('adm:rsend:')) {
+    const category = data.slice('adm:rsend:'.length);
+    const out = await sendRatesNow(env, { category });
+    await answer(`${t2('newsSent', lang).replace(tr('خبر', 'News', lang), tr('قیمت', 'Rates', lang))} ${out.sent} ${tr('مقصد', 'destination(s)', lang)}${out.failed ? ` · ${out.failed} ${t2('newsFailed', lang)}` : ''}`, false);
+    await ratesScreen(env, token, chatId, await getSettings(env), lang);
+    return true;
+  }
+  if (data.startsWith('adm:rcat:')) {
+    const category = data.slice('adm:rcat:'.length);
+    await patch(env, { rates: { autoSend: { ...cfg, category, enabled: true } } });
+    await answer(t2('saved', lang));
+    await ratesScreen(env, token, chatId, await getSettings(env), lang);
+    return true;
+  }
+  if (data === 'adm:rt:off') {
+    await patch(env, { rates: { autoSend: { ...cfg, time: '', enabled: false } } });
+    await answer('⏸ ' + tr('زمان روزانه حذف شد؛ ارسال خودکار خاموش شد.', 'Daily time removed; auto-send off.', lang));
+    await ratesScreen(env, token, chatId, await getSettings(env), lang);
+    return true;
+  }
+  if (data.startsWith('adm:rt:')) {
+    const time = data.slice('adm:rt:'.length);
+    assert(isValidTime(time), 'invalid_rates_time');
+    await patch(env, { rates: { autoSend: { ...cfg, time, enabled: true } } });
+    await answer(`🕐 ${t2('saved', lang)} ${time}`);
+    await ratesScreen(env, token, chatId, await getSettings(env), lang);
+    return true;
+  }
+  if (data === 'adm:rauto') {
+    await patch(env, { rates: { autoSend: { ...cfg, enabled: !cfg.enabled } } });
+    const next = await getSettings(env);
+    await answer(next.rates.autoSend.enabled ? '▶️ ' + tr('ارسال خودکار قیمت روشن شد', 'Rate auto-send enabled', lang) : '⏸ ' + tr('ارسال خودکار قیمت خاموش شد', 'Rate auto-send disabled', lang));
+    await ratesScreen(env, token, chatId, next, lang);
+    return true;
+  }
+  await ratesScreen(env, token, chatId, settings, lang);
+  return true;
+}
+
 async function handleRelayPublish(env, token, chatId, lang, relayId, answer, refresh) {
   const settings = await getSettings(env);
   const dest = (settings.relay.destinations || []).map(d => d.chatId);
@@ -734,7 +1202,7 @@ export async function adminFlow(env, token, user, settings, lang, msg) {
     }
     if (flow.type === 'adm_broadcast_text') {
       assert(text.length <= 4096, 'invalid_text'); user.flow = { type: 'adm_broadcast_target', text }; await putUser(env, user);
-      await sendToUser(token, chatId, tr('مخاطبان ارسال را انتخاب کنید:', 'Choose broadcast recipients:', lang), { reply_markup: { inline_keyboard: [
+      await editPrompt(token, chatId, flow.messageId, tr('مخاطبان ارسال را انتخاب کنید:', 'Choose broadcast recipients:', lang), { reply_markup: { inline_keyboard: [
         [{ text: tr('👥 همه کاربران', '👥 All users', lang), callback_data: 'adm:bt:all' }],
         [{ text: tr('🟢 فعال ۷ روز اخیر', '🟢 Active in 7 days', lang), callback_data: 'adm:bt:active7d' }, { text: tr('🟢 فعال ۳۰ روز اخیر', '🟢 Active in 30 days', lang), callback_data: 'adm:bt:active30d' }],
         backRow(lang),
@@ -776,12 +1244,115 @@ export async function adminFlow(env, token, user, settings, lang, msg) {
     if (flow.type === 'adm_add_text') {
       const btnText = str(text, 64);
       assert(btnText, 'invalid_menu_button');
-      user.flow = { type: 'adm_add_type', pending: { text: btnText } };
+      user.flow = { type: 'adm_add_type', pending: { text: btnText }, messageId: flow.messageId };
       await putUser(env, user);
-      await sendToUser(token, chatId, t2('typePrompt', lang), { reply_markup: { inline_keyboard: [
+      await editPrompt(token, chatId, flow.messageId, t2('typePrompt', lang), { reply_markup: { inline_keyboard: [
         [{ text: '🔗 ' + tr('لینک', 'URL', lang), callback_data: 'adm:atype:url' }, { text: '⚡ ' + tr('کال‌بک', 'Callback', lang), callback_data: 'adm:atype:callback' }],
         [{ text: '📂 ' + tr('زیرمنو', 'Submenu', lang), callback_data: 'adm:atype:submenu' }, { text: '💬 ' + tr('پاپ‌آپ متن', 'Text popup', lang), callback_data: 'adm:atype:text' }],
       ] } });
+      return true;
+    }
+    if (flow.type === 'adm_product_add') {
+      const parts = text.split('|').map(v => String(v || '').trim());
+      assert(parts[0] && parts[1], 'invalid_product');
+      const price = Number(parts[1].replace(/[^\d]/g, ''));
+      assert(Number.isFinite(price) && price >= 0, 'invalid_product');
+      const p = await validateProduct(env, { title: parts[0], price, stock: -1 });
+      await env.BOT_KV.put(entityKey('product', p.id), JSON.stringify(p));
+      user.flow = null; await putUser(env, user);
+      await finish(t2('btnAdded', lang));
+      return true;
+    }
+    if (flow.type === 'adm_coupon_add') {
+      const parts = text.split('|').map(v => String(v || '').trim());
+      assert(parts.length === 3, 'invalid_coupon');
+      const code = str(parts[0], 32).toUpperCase(), type = parts[1].toLowerCase(), value = Number(parts[2]);
+      assert(/^[A-Z0-9_-]{3,32}$/.test(code) && ['percent', 'amount'].includes(type) && Number.isFinite(value) && value > 0, 'invalid_coupon');
+      const id = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+      await env.BOT_KV.put(entityKey('coupon', id), JSON.stringify({ id, code, type, value: type === 'percent' ? Math.min(100, Math.round(value)) : Math.round(value), startsAt: 0, expiresAt: 0, maxUses: 0, used: 0, reserved: 0, hidden: false, createdAt: Date.now() }));
+      user.flow = null; await putUser(env, user);
+      await finish(t2('btnAdded', lang));
+      return true;
+    }
+    if (flow.type === 'adm_lock_set') {
+      const cur = await getSettings(env);
+      if (text.toLowerCase() === 'off') {
+        await patch(env, { requiredChats: { ...(cur.requiredChats || {}), enabled: false } });
+        user.flow = null; await putUser(env, user);
+        await finish(t2('saved', lang));
+        return true;
+      }
+      const [chat, url] = text.split('|').map(v => String(v || '').trim());
+      assert(isChatId(chat), 'invalid_chat_id');
+      assert(!url || /^https?:\/\/[^\s]+$/.test(url), 'invalid_join_url');
+      const targets = [{ chatId: chat, url: url || '', title: '' }];
+      const enabledNow = url ? true : (cur.requiredChats?.enabled ?? true);
+      await patch(env, { requiredChats: { enabled: enabledNow, targets } });
+      user.flow = null; await putUser(env, user);
+      await finish(t2('saved', lang));
+      return true;
+    }
+    if (flow.type === 'adm_shop_card') {
+      const cur = await getSettings(env);
+      if (text.toLowerCase() === 'off') {
+        cur.shop.cardNumber = ''; cur.shop.cardHolder = '';
+        await saveSettings(env, cur);
+        user.flow = null; await putUser(env, user);
+        await finish(t2('saved', lang));
+        return true;
+      }
+      const [card, holder] = text.split('|').map(v => String(v || '').trim());
+      const cleanCard = card.replace(/[\s-]/g, '');
+      assert(/^6\d{15}$/.test(cleanCard) || /^\d{16}$/.test(cleanCard), 'invalid_card_number');
+      cur.shop.cardNumber = cleanCard; cur.shop.cardHolder = str(holder, 100);
+      await saveSettings(env, cur);
+      user.flow = null; await putUser(env, user);
+      await finish(t2('saved', lang));
+      return true;
+    }
+    if (flow.type === 'adm_shop_notify') {
+      const cur = await getSettings(env);
+      const chat = text === '0' ? '' : str(text, 64);
+      assert(!chat || isChatId(chat), 'invalid_chat_id');
+      cur.shop.notifyChatId = chat;
+      await saveSettings(env, cur);
+      user.flow = null; await putUser(env, user);
+      await finish(t2('saved', lang));
+      return true;
+    }
+    if (flow.type === 'adm_token_set') {
+      const tk = str(text, 256);
+      assert(/^\d+:[A-Za-z0-9_-]+$/.test(tk), 'invalid_bot_token');
+      const me = await tgApi(tk, 'getMe');
+      assert(me.ok && me.result?.is_bot, 'telegram_connection_failed');
+      const cur = await getSettings(env);
+      cur.botToken = tk; cur.botUsername = me.result.username || '';
+      await saveSettings(env, cur);
+      user.flow = null; await putUser(env, user);
+      await finish(`✅ ${tr('توکن جدید راستی‌آزمایی و ذخیره شد.', 'New token verified and saved.', lang)} @${me.result.username || ''}`);
+      return true;
+    }
+    if (flow.type === 'adm_sb_text') {
+      const [fa, en] = text.split('|').map(v => String(v || '').trim());
+      assert(fa, 'invalid_text');
+      const cur = await getSettings(env);
+      cur.supportButton = { enabled: cur.supportButton?.enabled !== false, fa: str(fa, 64) || '🛡 پشتیبانی', en: str(en, 64) || '🛡 Support' };
+      await saveSettings(env, cur);
+      user.flow = null; await putUser(env, user);
+      await finish(t2('saved', lang));
+      return true;
+    }
+    if (flow.type === 'adm_rates_dest') {
+      const dest = text.split('\n').map(line => {
+        const [title, chat] = line.split('|').map(s => s.trim());
+        return { title: chat ? title : '', chatId: chat || title };
+      }).filter(d => d.chatId);
+      assert(dest.length && dest.length <= 10 && dest.every(d => isChatId(d.chatId)), 'invalid_destinations');
+      const cur = await getSettings(env);
+      await patch(env, { rates: { autoSend: { ...(cur.rates?.autoSend || {}), destinations: dest, enabled: true } } });
+      user.flow = null; await putUser(env, user);
+      const [fa, en] = T.destSaved(dest.length);
+      await finish(tr(fa, en, lang));
       return true;
     }
     if (flow.type === 'adm_add_value') {

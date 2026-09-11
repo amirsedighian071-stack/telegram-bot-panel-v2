@@ -67,7 +67,9 @@ function sanitizeMenu(input = {}) {
     };
   }
 
-  if (!inlineButtons.length) inlineButtons.push(...JSON.parse(JSON.stringify(DEFAULT_MENU.inlineButtons)));
+  // An explicit (even empty) button list is the administrator's decision: the
+  // default bot must be able to run with zero buttons until they are added.
+  if (!Array.isArray(input?.inlineButtons) && !inlineButtons.length) inlineButtons.push(...JSON.parse(JSON.stringify(DEFAULT_MENU.inlineButtons)));
   if (!Object.keys(submenus).length) submenus.shop = JSON.parse(JSON.stringify(DEFAULT_MENU.submenus.shop));
 
   return { welcome, help, inlineButtons, submenus };
