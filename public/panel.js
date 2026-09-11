@@ -4,7 +4,7 @@
   const I18N = {
     fa: {
       appName: 'پنل مدیریت ربات', appShort: 'BotPanel', poweredBy: 'قدرت‌گرفته از Cloudflare Workers',
-      loginSub: 'برای مدیریت ربات وارد شوید', password: 'رمز عبور', passwordPh: '••••••••',
+      loginSub: 'برای مدیریت ربات وارد شوید', loginEveryEntry: 'به‌دلیل امنیت، رمز عبور در هر بار ورود به پنل درخواست می‌شود.', password: 'رمز عبور', passwordPh: '••••••••',
       support: 'پشتیبانی', msgTab: 'پیام متنی', pollTab: 'نظرسنجی', photoTab: 'عکس و فایل', resultsTab: 'نتایج و آمار',
       targetUsers: 'کاربران خاص', targetChat: 'کانال / گروه', usersIdsPh: 'آیدی‌های عددی با کاما — مثال: 11111111, 22222222',
       chatIdPh2: 'آیدی چت — کانال: ‎-100…، گروه: ‎-…', question: 'سؤال نظرسنجی', questionPh: 'مثلاً: کدام گزینه را می‌پسندید؟',
@@ -97,7 +97,7 @@
     },
     en: {
       appName: 'Bot Admin Panel', appShort: 'BotPanel', poweredBy: 'Powered by Cloudflare Workers',
-      loginSub: 'Sign in to manage your bot', password: 'Password', passwordPh: '••••••••',
+      loginSub: 'Sign in to manage your bot', loginEveryEntry: 'For security, your password is required every time you open the panel.', password: 'Password', passwordPh: '••••••••',
       support: 'Support', msgTab: 'Text message', pollTab: 'Poll', photoTab: 'Photo & file', resultsTab: 'Results & stats',
       targetUsers: 'Specific users', targetChat: 'Channel / Group', usersIdsPh: 'Numeric IDs, comma-separated — e.g. 11111111, 22222222',
       chatIdPh2: 'Chat ID — channel: -100…, group: -…', question: 'Poll question', questionPh: 'e.g. Which option do you prefer?',
@@ -191,7 +191,7 @@
   };
 
   const S = {
-    token: localStorage.getItem('bp_token') || '',
+    token: sessionStorage.getItem('bp_token') || '',
     lang: localStorage.getItem('bp_lang') || 'fa',
     route: 'dashboard',
     timers: [],
@@ -357,7 +357,7 @@
     let d = {};
     try { d = await res.json(); } catch (e) {}
     if (res.status === 401 && d.error === 'unauthorized') {
-      if (S.token) { localStorage.removeItem('bp_token'); S.token = ''; render(); }
+      if (S.token) { sessionStorage.removeItem('bp_token'); S.token = ''; render(); }
       throw new Error(t('relogin'));
     }
     if (d.error === 'password_change_required') { S.mustChangePassword = true; render(); }
@@ -493,6 +493,7 @@
       '<div class="mx-auto w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-400 to-blue-600 flex items-center justify-center shadow-lg shadow-brand-500/30 mb-4"><i data-lucide="send" class="w-8 h-8 text-white"></i></div>' +
       '<h1 class="text-2xl font-extrabold">' + t('appName') + '</h1>' +
       '<p class="text-sm text-slate-500 mt-1.5">' + t('loginSub') + '</p>' +
+      '<p class="text-[11px] text-slate-400 mt-2 flex items-center justify-center gap-1.5"><i data-lucide="shield-check" class="w-3.5 h-3.5"></i>' + t('loginEveryEntry') + '</p>' +
       '</div>' +
       '<div class="' + CLS.card + ' p-6">' +
       (msg ? '<div class="mb-4 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs px-3 py-2.5">' + esc(msg) + '</div>' : '') +
@@ -538,7 +539,7 @@
         return j.data;
       })();
       S.token = d.token;
-      localStorage.setItem('bp_token', d.token);
+      sessionStorage.setItem('bp_token', d.token);
       S.mustChangePassword = !!d.requiresPasswordChange;
       if (S.mustChangePassword) { render(); return; }
       toast(t('signIn') + ' ✓', 'success');
@@ -556,7 +557,7 @@
   async function doLogout() {
     if (!(await confirmDlg(t('confirmLogout'), t('logout')))) return;
     try { await api('/auth/logout', { method: 'POST' }); } catch (e) {}
-    localStorage.removeItem('bp_token');
+    sessionStorage.removeItem('bp_token');
     S.token = '';
     render();
   }
@@ -2399,4 +2400,4 @@ ACTIONS.finishPasswordSetup = async () => {
   catch(e){fail(typeof vError==='function'?vError(e.message):e.message);}
   finally {if(button.isConnected)button.disabled=false;}
 };
-ACTIONS.setupLogout=async()=>{await api('/auth/logout',{method:'POST'}).catch(()=>{});S.token='';S.mustChangePassword=false;localStorage.removeItem('bp_token');render();};
+ACTIONS.setupLogout=async()=>{await api('/auth/logout',{method:'POST'}).catch(()=>{});S.token='';S.mustChangePassword=false;sessionStorage.removeItem('bp_token');render();};

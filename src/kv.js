@@ -113,8 +113,14 @@ export function withMenuDefaults(menu = {}) {
       };
     }
   }
+  const explicitRows = Array.isArray(menu?.inlineButtons)
+    ? menu.inlineButtons.filter((row) => Array.isArray(row) && row.length)
+    : null;
   return {
     customized: menu.customized === true || Object.keys(menu).length > 0,
+    // The rows the administrator actually stored (null = never customized; an
+    // explicit empty list = a default bot running with no buttons yet).
+    explicitInlineButtons: explicitRows,
     welcome: {
       fa: menu?.welcome?.fa ?? DEFAULT_MENU.welcome.fa,
       en: menu?.welcome?.en ?? DEFAULT_MENU.welcome.en,

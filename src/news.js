@@ -1,8 +1,9 @@
 import { getJson, putJson, getSettings } from './kv.js';
 import { sendToUser, resolveToken } from './bot-api.js';
-import { text as tr, str, isChatId, assert } from './config.js';
+import { text as tr, str, int, isChatId, isValidTime, assert } from './config.js';
 import { publicFeed, safePublicUrl } from './network.js';
 import { parseFeed } from './automation.js';
+import { fetchLimited } from './services/common.js';
 
 export const NEWS_CATEGORIES = {
   breaking: { fa: '🚨 خبرهای فوری و مهم', en: '🚨 Breaking & Top Stories', icon: 'zap' },
@@ -14,6 +15,9 @@ export const NEWS_CATEGORIES = {
 };
 export const NEWS_CATEGORY_KEYS = ['all', ...Object.keys(NEWS_CATEGORIES)];
 export const NEWS_SEND_CATS = ['breaking', 'politics', 'economy', 'sports', 'tech', 'world'];
+// Categories the user can browse inside the bot, per region.
+export const NEWS_REGION_CATS = ['breaking', 'politics', 'economy', 'sports', 'tech'];
+export const WORLD_REGION_CATS = ['all', 'politics', 'economy', 'sports', 'tech'];
 
 export const NEWS_SOURCES = [
   { id: 'irna', name: 'خبرگزاری ایرنا (IRNA)', url: 'https://www.irna.ir/rss' },
@@ -101,20 +105,91 @@ const NEWS_KEYWORDS = {
 };
 const NEWS_KEYWORD_FALLBACK_ORDER = ['politics', 'economy', 'sports', 'tech'];
 
+// English-language classifier for the world feeds; items without a clear score
+// stay in the general ("all") bucket instead of a forced category.
+const WORLD_KEYWORDS = {
+  politics: ['government', 'parliament', 'political', 'minister', 'president', 'election', 'diplomacy', 'diplomat', 'summit', 'united nations', 'white house', 'congress', 'senate', 'sanction', 'sanctions', 'treaty', 'coalition', 'opposition', 'prime minister', 'cabinet', 'military', 'army', 'defense', 'defence', 'attack', 'ceasefire', 'peace talks', 'protest', 'policy', 'minister', 'leader'],
+  economy: ['economy', 'economic', 'markets', 'inflation', 'interest rates', 'central bank', 'gdp', 'trade', 'tariffs', 'exports', 'imports', 'oil prices', 'stocks', 'investment', 'budget', 'currency', 'dollar', 'euro', 'recession', 'unemployment', 'companies', 'banks', 'investors', 'commodities', 'prices', 'jobs'],
+  sports: ['sports', 'football', 'soccer', 'olympics', 'olympic', 'tennis', 'golf', 'basketball', 'cricket', 'racing', 'formula 1', 'f1', 'matches', 'league', 'championship', 'tournament', 'world cup', 'finals', 'players', 'coach', 'stadium', 'season', 'win', 'defeat'],
+  tech: ['technology', 'tech', 'ai', 'artificial intelligence', 'software', 'hardware', 'chips', 'semiconductor', 'internet', 'cyber', 'space', 'nasa', 'satellite', 'robot', 'startups', 'smartphone', 'digital', 'quantum', 'data centers'],
+};
+
 const normalize = (value) => String(value || '').replace(/[\u200c\u200f\u200e]/g, ' ').toLowerCase();
-function classifyItem(item) {
+function classifyWithKeywords(item, keywords, fallback = null) {
   const title = normalize(item.title), summary = normalize(item.summary);
   let best = '', bestScore = 0;
   for (const cat of NEWS_KEYWORD_FALLBACK_ORDER) {
+    if (!keywords[cat]) continue;
     let score = 0;
-    for (const kw of NEWS_KEYWORDS[cat]) {
+    for (const kw of keywords[cat]) {
       const needle = normalize(kw);
       if (title.includes(needle)) score += 3;
       else if (summary.includes(needle)) score += 1;
     }
     if (score > bestScore) { bestScore = score; best = cat; }
   }
-  return bestScore >= 3 ? best : item.category && NEWS_CATEGORY_KEYS.includes(item.category) ? item.category : 'breaking';
+  if (bestScore >= 3) return best;
+  if (fallback === null) return item.category && NEWS_CATEGORY_KEYS.includes(item.category) ? item.category : 'breaking';
+  return fallback;
+}
+const classifyItem = (item) => classifyWithKeywords(item, NEWS_KEYWORDS);
+const classifyWorldItem = (item) => classifyWithKeywords(item, WORLD_KEYWORDS, null);
+
+/* ---------- Persian translation of world headlines ----------
+ * World feeds are English-only, but the bot must show every headline in Persian.
+ * Translation goes through free public endpoints (Google gtx first, MyMemory as
+ * fallback), is cached for 30 days in KV, and degrades gracefully to the original
+ * English text when a provider is unreachable. */
+const TRANSLATE_BUILDERS = [
+  (q) => `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=fa&dt=t&q=${encodeURIComponent(q)}`,
+  (q) => `https://api.mymemory.translated.net/get?q=${encodeURIComponent(q)}&langpair=en|fa`,
+];
+const TRANSLATE_TTL = 30 * 86400;
+const NEGATIVE_TTL = 3600;
+const hasFaScript = (t) => /[\u0600-\u06FF]/.test(String(t || ''));
+const decodeEntities = (s) => String(s || '')
+  .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+  .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+  .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+async function hexDigest(value) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value)));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+export async function translateToFa(env, raw) {
+  const t = String(raw || '').trim();
+  if (!t || hasFaScript(t)) return t;
+  const key = 'v2:news:tr:' + (await hexDigest(t)).slice(0, 40);
+  const cached = await getJson(env, key);
+  if (cached?.fa) return cached.fa;
+  const q = t.slice(0, 450);
+  for (const build of TRANSLATE_BUILDERS) {
+    try {
+      const res = await fetchLimited(build(q), { headers: { accept: 'application/json' } }, 256 * 1024);
+      let out = '';
+      if (res.ok && res.data) {
+        if (Array.isArray(res.data) && Array.isArray(res.data[0])) out = res.data[0].map(seg => String(seg?.[0] || '')).join('');
+        else if (res.data?.responseData?.translatedText) out = String(res.data.responseData.translatedText);
+      }
+      out = decodeEntities(out).trim();
+      if (out && hasFaScript(out) && out !== q) {
+        await putJson(env, key, { fa: out, at: Date.now() }, { ttl: TRANSLATE_TTL });
+        return out;
+      }
+    } catch { /* try the next provider */ }
+  }
+  await putJson(env, key, { fa: '', at: Date.now() }, { ttl: NEGATIVE_TTL });
+  return t;
+}
+// Only the items the user actually sees get translated, so the free endpoints
+// are used sparingly; everything is cached afterwards.
+async function withFaTitles(env, items, cap = 8) {
+  let pending = 0;
+  for (const item of items) {
+    if (item.titleFa || hasFaScript(item.title) || pending >= cap) continue;
+    pending += 1;
+    item.titleFa = await translateToFa(env, item.title);
+  }
+  return items;
 }
 
 const SRC_CACHE_TTL = 5 * 60000;
@@ -179,28 +254,29 @@ export async function aggregateWorldNews(env) {
       const key = normalize(item.title).slice(0, 100);
       if (seen.has(key)) continue;
       seen.add(key);
-      merged.push(item);
+      merged.push({ ...item, category: classifyWorldItem(item) });
     }
   }
   return merged;
 }
 
 export const WORLD_FALLBACK_NEWS = [
-  { id: 'world-1', title: 'World news updates from international sources', summary: 'Live international headlines will appear here as soon as a world-news feed is available.', source: 'World news', url: 'https://www.bbc.com/news/world', publishedAt: Date.now() },
+  { id: 'world-1', title: 'World news updates from international sources', titleFa: 'خبرهای بین‌المللی از رسانه‌های جهانی', summary: 'Live international headlines will appear here as soon as a world-news feed is available.', titleFaSummary: 'سرخط‌های خبری بین‌المللی به‌محض در دسترس بودن فیدها اینجا نمایش داده می‌شود.', source: 'World news', url: 'https://www.bbc.com/news/world', publishedAt: Date.now(), category: 'all' },
 ];
 
 const fallbackWithCategory = (category) =>
   FALLBACK_NEWS.filter(n => n.category === category).map(n => ({ ...n, id: 'fb:' + n.id }));
 
-export async function fetchLiveNews(env, category = 'breaking') {
-  if (category === 'world') {
-    const liveWorld = await aggregateWorldNews(env);
-    return (liveWorld.length
-      ? liveWorld.map(item => ({ ...item, category: 'world', region: 'world' }))
-      : WORLD_FALLBACK_NEWS.map(n => ({ ...n, id: `fb:${n.id}`, category: 'world', region: 'world' }))).slice(0, 12);
+export async function fetchLiveNews(env, category = 'breaking', region = 'iran') {
+  if (region === 'world') {
+    let live = await aggregateWorldNews(env);
+    if (!live.length) live = WORLD_FALLBACK_NEWS.map(n => ({ ...n, id: `fb:${n.id}`, region: 'world' }));
+    if (category && category !== 'all' && category !== 'world' && category !== 'breaking') live = live.filter(i => i.category === category);
+    const top = live.slice(0, 12);
+    return withFaTitles(env, top).then(() => top);
   }
   const live = (await aggregateNews(env)).map(item => ({ ...item, category: classifyItem(item), region: 'iran' }));
-  const mixed = category === 'breaking' || category === 'all';
+  const mixed = category === 'breaking' || category === 'all' || category === 'world';
   if (mixed) {
     if (live.length) return live.slice(0, 12);
     return fallbackWithCategory('breaking').concat(FALLBACK_NEWS.filter(n => n.category !== 'breaking').map(n => ({ ...n, id: 'fb:' + n.id })));
@@ -216,6 +292,11 @@ export async function fetchLiveNews(env, category = 'breaking') {
   return items.slice(0, 12);
 }
 
+export function newsDisplayTitle(item, lang = 'fa') {
+  if (lang === 'en') return item.title;
+  return item.titleFa || item.title;
+}
+
 export function newsDigestText(items, category = 'all', lang = 'fa') {
   const now = new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', dateStyle: 'full', timeStyle: 'short' }).format(new Date());
   const header = category === 'all'
@@ -227,10 +308,10 @@ export function newsDigestText(items, category = 'all', lang = 'fa') {
       const rows = items.filter(i => i.category === cat).slice(0, 2);
       if (!rows.length) continue;
       body += `\n${lang === 'en' ? NEWS_CATEGORIES[cat].en : NEWS_CATEGORIES[cat].fa}\n`;
-      for (const item of rows) body += `• ${item.title}\n🔗 ${item.url}\n`;
+      for (const item of rows) body += `• ${newsDisplayTitle(item, lang)}\n🔗 ${item.url}\n`;
     }
   } else {
-    for (const [i, item] of items.slice(0, 8).entries()) body += `\n${i + 1}. ${item.title}\n🔗 ${item.url}\n🏛 ${item.source}\n`;
+    for (const [i, item] of items.slice(0, 8).entries()) body += `\n${i + 1}. ${newsDisplayTitle(item, lang)}\n🔗 ${item.url}\n🏛 ${item.source}\n`;
   }
   return `${header}${body}\n────────────────────\n`;
 }
@@ -252,7 +333,8 @@ export async function sendNewsDigest(env, { category = 'all', destinations = [],
     if (category === 'all') {
       list = [];
       for (const cat of NEWS_SEND_CATS) list.push(...(await fetchLiveNews(env, cat)).slice(0, 2));
-    } else list = await fetchLiveNews(env, category);
+    } else if (category === 'world') list = await fetchLiveNews(env, 'world', 'world');
+    else list = await fetchLiveNews(env, category);
   }
   assert(list.length, 'news_empty');
   const text = newsDigestText(list, category);
@@ -265,114 +347,161 @@ export async function sendNewsDigest(env, { category = 'all', destinations = [],
 }
 
 /* Scheduled news delivery. Runs from the worker cron; pulls only items that were
- * not sent before, so an idle news day sends nothing. */
+ * not sent before, so an idle news day sends nothing.
+ * Two modes: interval (every N minutes) or daily time ("HH:MM" in Tehran). */
 const NEWS_STATE_KEY = 'v2:news:state';
+// Iran has observed a fixed UTC+3:30 offset since 2022 (no DST).
+const TEHRAN_OFFSET_MS = 3.5 * 3600 * 1000;
+function tehranParts(now) {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(now));
+  const g = (t) => parts.find((p) => p.type === t)?.value || '';
+  return { y: +g('year'), m: +g('month'), d: +g('day'), h: +g('hour'), min: +g('minute') };
+}
+export const tehranDate = (now = Date.now()) => { const p = tehranParts(now); return `${p.y}-${p.m}-${p.d}`; };
+export function tehranTodayAt(time, now = Date.now()) {
+  const [h, m] = String(time).split(':').map(Number);
+  const p = tehranParts(now);
+  return Date.UTC(p.y, p.m - 1, p.d, h, m) - TEHRAN_OFFSET_MS;
+}
 export async function newsTick(env) {
   const cfg = (await getSettings(env)).news?.autoSend;
   if (!cfg?.enabled || !cfg.destinations?.length) return;
   const token = await resolveToken(env);
   if (!token) return;
-  const state = (await getJson(env, NEWS_STATE_KEY)) || { nextAt: 0, sentIds: [], lastAt: 0 };
-  if (!state.nextAt || state.nextAt > Date.now()) {
-    if (!state.nextAt) { state.nextAt = Date.now() + Math.max(10, cfg.intervalMinutes) * 60000; await putJson(env, NEWS_STATE_KEY, state); }
-    return;
+  const state = (await getJson(env, NEWS_STATE_KEY)) || { nextAt: 0, sentIds: [], lastAt: 0, lastDay: '' };
+  const now = Date.now();
+  let due = false, daily = false;
+  if (cfg.time && isValidTime(cfg.time)) {
+    daily = true;
+    if (state.lastDay === tehranDate(now)) return;
+    if (now < tehranTodayAt(cfg.time, now)) return;
+    due = true;
+    state.lastDay = tehranDate(now);
+  } else {
+    const interval = Math.max(10, Number(cfg.intervalMinutes) || 60) * 60000;
+    if (!state.nextAt || state.nextAt > now) {
+      if (!state.nextAt) { state.nextAt = now + interval; await putJson(env, NEWS_STATE_KEY, state); }
+      return;
+    }
+    due = true;
+    state.nextAt = now + interval;
   }
+  if (!due) { await putJson(env, NEWS_STATE_KEY, state); return; }
   const category = NEWS_CATEGORY_KEYS.includes(cfg.category) ? cfg.category : 'all';
   const fresh = [];
   if (category === 'all') {
-    for (const cat of NEWS_SEND_CATS) for (const item of (await fetchLiveNews(env, cat)).slice(0, 2)) fresh.push(item);
-  } else fresh.push(...await fetchLiveNews(env, category));
+    for (const cat of NEWS_SEND_CATS) for (const item of (await fetchLiveNews(env, cat, cat === 'world' ? 'world' : 'iran')).slice(0, 2)) fresh.push(item);
+  } else fresh.push(...await fetchLiveNews(env, category, category === 'world' ? 'world' : 'iran'));
   const take = fresh.filter(i => !(state.sentIds || []).includes(i.id)).slice(0, 8);
-  state.nextAt = Date.now() + Math.max(10, cfg.intervalMinutes) * 60000;
-  if (take.length) {
-    const text = newsDigestText(take, category).slice(0, 4096);
+  if (daily && !take.length) { /* a daily digest must still go out with the freshest items */ }
+  if (take.length || daily) {
+    const batch = daily ? fresh.slice(0, 8) : take;
+    const text = newsDigestText(batch, category).slice(0, 4096);
     for (const d of cfg.destinations.slice(0, 10)) {
       if (!isChatId(d.chatId)) continue;
       const res = await sendToUser(token, d.chatId, text, { disable_web_page_preview: true });
       if (!res.ok && res.description) state.lastError = str(res.description, 160);
     }
-    state.sentIds = [...new Set([...(state.sentIds || []), ...take.map(i => i.id)])].slice(-300);
-    state.lastAt = Date.now();
+    state.sentIds = [...new Set([...(state.sentIds || []), ...batch.map(i => i.id)])].slice(-300);
+    state.lastAt = now;
   }
   await putJson(env, NEWS_STATE_KEY, state);
 }
 
+/* ============ Bot screens ============
+ * Flow (news purpose): /start → «خبر» → region (Iran | World) → category → list → item.
+ * Every screen is a text message with inline buttons so callback taps refresh
+ * the open message instead of stacking new ones. */
 export async function newsHome(env, token, user, lang = 'fa') {
   const breaking = await fetchLiveNews(env, 'breaking');
-  const top = breaking.slice(0, 3);
-
-  let text = `📰 ${tr('پایگاه اخبار مهم کشور ایران', 'Iran Breaking & Important News', lang)}\n` +
-    `${tr('جمع‌آوری لحظه‌ای از معتبرترین رسانه‌ها و خبرگزاری‌های رسمی کشور', 'Live collection from the country\'s most trusted news agencies', lang)}\n` +
-    `────────────────────\n\n` +
-    `🚨 ${tr('مهم‌ترین سرخط خبرها:', 'Top Headlines:', lang)}\n\n`;
-
-  for (let i = 0; i < top.length; i++) {
-    const n = top[i];
-    text += `${i + 1}. 📌 ${n.title}\n   🔹 ${String(n.summary || '').slice(0, 120)}…\n   🏛 ${n.source}\n\n`;
+  const top = breaking.slice(0, 2);
+  let text = `📰 ${tr('خبر کل کشور', 'Nation-wide News', lang)}\n` +
+    `${tr('اخبار ایران و خبرهای جهان، دسته‌بندی‌شده و با ترجمه فارسی', 'Iran news and world news — categorized, with Persian translation', lang)}\n` +
+    `────────────────────\n`;
+  if (top.length) {
+    text += `🚨 ${tr('مهم‌ترین سرخط‌های این لحظه:', 'Top headlines right now:')}\n\n`;
+    for (let i = 0; i < top.length; i++) text += `${i + 1}. 📌 ${newsDisplayTitle(top[i], lang)}\n\n`;
+    text += `────────────────────\n`;
   }
-  text += `────────────────────\n` +
-    `${tr('منبع خبر را انتخاب کنید یا اخبار را بر اساس موضوع ببینید:', 'Choose a news region or browse by topic:', lang)}`;
-
+  text += tr('منبع خبر را انتخاب کنید:', 'Choose a news source:');
   const rows = [
     [
-      { text: '🇮🇷 ' + tr('اخبار ایران', 'Iran News', lang), callback_data: 'news:iran' },
-      { text: '🌍 ' + tr('اخبار کل جهان', 'World News', lang), callback_data: 'news:world' },
+      { text: '🇮🇷 ' + tr('خبر ایران', 'Iran News', lang), callback_data: 'news:iran' },
+      { text: '🌍 ' + tr('خبر جهانی', 'World News', lang), callback_data: 'news:world' },
     ],
-    [
-      { text: '🚨 ' + tr('خبرهای فوری', 'Breaking', lang), callback_data: 'news:cat:breaking' },
-      { text: '🏛 ' + tr('سیاسی و دولت', 'Politics', lang), callback_data: 'news:cat:politics' },
-    ],
-    [
-      { text: '📈 ' + tr('اقتصادی و بازار', 'Economy', lang), callback_data: 'news:cat:economy' },
-      { text: '⚽ ' + tr('ورزشی', 'Sports', lang), callback_data: 'news:cat:sports' },
-    ],
-    [
-      { text: '💻 ' + tr('فناوری و دانش', 'Technology', lang), callback_data: 'news:cat:tech' },
-      { text: '🔄 ' + tr('بروزرسانی اخبار', 'Refresh', lang), callback_data: 'news:refresh' },
-    ],
-    [
-      { text: '🔙 ' + tr('بازگشت به منوی اصلی', 'Back to main menu', lang), callback_data: 'sub:root' },
-    ],
+    [{ text: '🔙 ' + tr('بازگشت به منوی اصلی', 'Back to main menu', lang), callback_data: 'sub:root' }],
   ];
-
   return sendToUser(token, user.id, text.slice(0, 4096), { reply_markup: { inline_keyboard: rows }, disable_web_page_preview: true });
 }
 
-export async function newsCategory(env, token, user, lang = 'fa', category = 'breaking') {
-  const catInfo = NEWS_CATEGORIES[category] || NEWS_CATEGORIES.breaking;
-  const items = await fetchLiveNews(env, category);
-
-  let text = `${lang === 'en' ? catInfo.en : catInfo.fa}\n${tr('به‌روزشده:', 'Updated:', lang)} ${new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit' }).format(new Date())}\n────────────────────\n\n`;
+export async function newsRegion(env, token, user, lang = 'fa', region = 'iran') {
+  const isWorld = region === 'world';
+  const cats = isWorld ? WORLD_REGION_CATS : NEWS_REGION_CATS;
+  const title = isWorld
+    ? `🌍 ${tr('خبرهای جهان — ترجمه فارسی', 'World News — Persian translation', lang)}`
+    : `🇮🇷 ${tr('خبرهای ایران', 'Iran News', lang)}`;
   const rows = [];
+  const label = (key) => {
+    if (isWorld && key === 'all') return '🌐 ' + tr('همه دسته‌ها', 'All categories', lang);
+    const c = NEWS_CATEGORIES[key] || NEWS_CATEGORIES.breaking;
+    return (lang === 'en' ? c.en : c.fa);
+  };
+  for (let i = 0; i < cats.length; i += 2) {
+    const pair = cats.slice(i, i + 2).map((key) => ({
+      text: label(key),
+      callback_data: isWorld ? `news:wcat:${key}` : `news:cat:${key}`,
+    }));
+    rows.push(pair);
+  }
+  rows.push([
+    { text: '🔄 ' + tr('بروزرسانی', 'Refresh', lang), callback_data: isWorld ? 'news:world' : 'news:iran' },
+    { text: '📰 ' + tr('منبع خبر', 'News source', lang), callback_data: 'news:home' },
+  ]);
+  rows.push([{ text: '🔙 ' + tr('بازگشت به منوی اصلی', 'Back to main menu', lang), callback_data: 'sub:root' }]);
+  return sendToUser(token, user.id,
+    `${title}\n${tr('دسته مورد نظر را انتخاب کنید:', 'Choose a category:')}`,
+    { reply_markup: { inline_keyboard: rows }, disable_web_page_preview: true });
+}
 
+export async function newsCategory(env, token, user, lang = 'fa', category = 'breaking', region = 'iran') {
+  const isWorld = region === 'world';
+  const catInfo = NEWS_CATEGORIES[category] || (isWorld ? NEWS_CATEGORIES.world : NEWS_CATEGORIES.breaking);
+  const items = await fetchLiveNews(env, category, region);
+
+  let text = `${lang === 'en' ? catInfo.en : catInfo.fa}\n${tr('به‌روزشده:', 'Updated:')} ${new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit' }).format(new Date())}\n────────────────────\n\n`;
+  const rows = [];
+  const prefix = isWorld ? 'news:witem' : 'news:item';
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    text += `${i + 1}. 📌 ${item.title}\n   🏛 ${item.source}\n\n`;
-    rows.push([{ text: `📄 ${item.title.slice(0, 36)}…`, callback_data: `news:item:${category}:${i}` }]);
+    text += `${i + 1}. 📌 ${newsDisplayTitle(item, lang)}\n   🏛 ${item.source}\n\n`;
+    rows.push([{ text: `📄 ${String(newsDisplayTitle(item, lang)).slice(0, 36)}…`, callback_data: `${prefix}:${category}:${i}` }]);
   }
   if (!items.length) text += tr('فعلاً خبری در این دسته یافت نشد.', 'No news found in this category yet.', lang) + '\n\n';
 
   rows.push([
-    { text: '🔄 ' + tr('بروزرسانی', 'Refresh', lang), callback_data: `news:cat:${category}` },
-    { text: '🔙 ' + tr('بازگشت به دسته‌ها', 'Back to categories', lang), callback_data: 'news:home' },
+    { text: '🔄 ' + tr('بروزرسانی', 'Refresh', lang), callback_data: isWorld ? `news:wcat:${category}` : `news:cat:${category}` },
+    { text: '🔙 ' + tr('بازگشت به دسته‌ها', 'Back to categories', lang), callback_data: isWorld ? 'news:world' : 'news:iran' },
   ]);
   rows.push([
-    { text: '🔙 ' + tr('بازگشت به منوی اصلی', 'Back to main menu', lang), callback_data: 'sub:root' },
+    { text: '📰 ' + tr('منبع خبر', 'News source', lang), callback_data: 'news:home' },
+    { text: '🔙 ' + tr('منوی اصلی', 'Main menu', lang), callback_data: 'sub:root' },
   ]);
 
   return sendToUser(token, user.id, text.slice(0, 4096), { reply_markup: { inline_keyboard: rows }, disable_web_page_preview: true });
 }
 
-export async function newsItem(env, token, user, lang = 'fa', category = 'breaking', index = 0) {
-  const items = await fetchLiveNews(env, category);
+export async function newsItem(env, token, user, lang = 'fa', category = 'breaking', index = 0, region = 'iran') {
+  const isWorld = region === 'world';
+  const items = await fetchLiveNews(env, category, region);
   const item = items[index] || items[0];
-  if (!item) return newsHome(env, token, user, lang);
+  if (!item) return newsRegion(env, token, user, lang, region);
 
   const timeStr = new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit' }).format(new Date(item.publishedAt || Date.now()));
+  const summary = isWorld && lang === 'fa' && item.titleFaSummary ? item.titleFaSummary : item.summary;
 
-  const text = `📰 <b>${item.title}</b>\n\n` +
+  const text = `📰 <b>${newsDisplayTitle(item, lang)}</b>\n\n` +
     `⏰ ${tr('زمان انتشار', 'Published', lang)}: ${timeStr} | 🏛 ${item.source}\n\n` +
-    `${String(item.summary || '').slice(0, 1200)}\n\n` +
+    `${String(summary || '').slice(0, 1200)}\n\n` +
     `────────────────────\n` +
     `🔗 ${tr('برای مشاهده متن کامل خبر در سایت مرجع، دکمه زیر را لمس کنید.', 'Tap below to read the full article on the news website.', lang)}`;
 
@@ -381,11 +510,12 @@ export async function newsItem(env, token, user, lang = 'fa', category = 'breaki
     rows.push([{ text: '🌐 ' + tr('مشاهده متن کامل خبر در منبع', 'Read Full Article', lang), url: item.url }]);
   }
   rows.push([
-    { text: '🔙 ' + tr('بازگشت به لیست اخبار', 'Back to news list', lang), callback_data: `news:cat:${category}` },
-    { text: '🔙 ' + tr('منوی اخبار', 'News menu', lang), callback_data: 'news:home' },
+    { text: '🔙 ' + tr('بازگشت به لیست اخبار', 'Back to news list', lang), callback_data: isWorld ? `news:wcat:${category}` : `news:cat:${category}` },
+    { text: '🔙 ' + tr('دسته‌ها', 'Categories', lang), callback_data: isWorld ? 'news:world' : 'news:iran' },
   ]);
   rows.push([
-    { text: '🔙 ' + tr('بازگشت به منوی اصلی', 'Back to main menu', lang), callback_data: 'sub:root' },
+    { text: '📰 ' + tr('منبع خبر', 'News source', lang), callback_data: 'news:home' },
+    { text: '🔙 ' + tr('منوی اصلی', 'Main menu', lang), callback_data: 'sub:root' },
   ]);
 
   return sendToUser(token, user.id, text.slice(0, 4096), { reply_markup: { inline_keyboard: rows }, disable_web_page_preview: true });
@@ -396,20 +526,32 @@ export async function newsCallback(env, token, user, lang, data) {
   const parts = data.split(':');
   const action = parts[1];
 
-  if (action === 'home' || action === 'iran' || action === 'refresh') {
+  if (action === 'home' || action === 'refresh') {
     await newsHome(env, token, user, lang);
     return true;
   }
+  if (action === 'iran') {
+    await newsRegion(env, token, user, lang, 'iran');
+    return true;
+  }
   if (action === 'world') {
-    await newsCategory(env, token, user, lang, 'world');
+    await newsRegion(env, token, user, lang, 'world');
     return true;
   }
   if (action === 'cat') {
-    await newsCategory(env, token, user, lang, parts[2] || 'breaking');
+    await newsCategory(env, token, user, lang, parts[2] || 'breaking', 'iran');
+    return true;
+  }
+  if (action === 'wcat') {
+    await newsCategory(env, token, user, lang, parts[2] || 'all', 'world');
     return true;
   }
   if (action === 'item') {
-    await newsItem(env, token, user, lang, parts[2] || 'breaking', Number(parts[3] || 0));
+    await newsItem(env, token, user, lang, parts[2] || 'breaking', Number(parts[3] || 0), 'iran');
+    return true;
+  }
+  if (action === 'witem') {
+    await newsItem(env, token, user, lang, parts[2] || 'all', Number(parts[3] || 0), 'world');
     return true;
   }
   return false;

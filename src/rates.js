@@ -1,8 +1,16 @@
-import { getJson, putJson } from './kv.js';
-import { tgApi, sendToUser } from './bot-api.js';
-import { text as tr, str, int } from './config.js';
+import { getJson, putJson, getSettings } from './kv.js';
+import { tgApi, sendToUser, resolveToken } from './bot-api.js';
+import { text as tr, str, int, isChatId, isValidTime, assert } from './config.js';
 import { fetchLimited } from './services/common.js';
 import { MARKET_ENDPOINT } from './services/rates.js';
+import { tehranDate, tehranTodayAt } from './news.js';
+
+export const RATES_SEND_CATS = ['all', 'gold', 'fiat', 'crypto'];
+export const RATES_CATEGORIES = {
+  gold: { fa: '🪙 طلا و انواع سکه', en: '🪙 Gold & Coins' },
+  fiat: { fa: '💵 ارزهای بازار آزاد', en: '💵 Fiat Currencies' },
+  crypto: { fa: '💎 رمزارزها و تتر', en: '💎 Crypto & Tether' },
+};
 
 export const GOLD_DATA = {
   gold18: { fa: 'طلای ۱۸ عیار', en: '18K Gold (per gram)', unit: 'گرم', price: 4350000, change: 1.25, high: 4380000, low: 4320000 },
@@ -172,4 +180,74 @@ export async function ratesCallback(env, token, user, lang, data) {
     return true;
   }
   return false;
+}
+
+/* ============ Scheduled rate delivery to a channel/group ============
+ * The administrator picks which asset family (gold / currencies / crypto, or all
+ * three) and a daily Tehran time; the cron tick publishes the table at that time. */
+export async function liveRatesDigestText(env, category = 'all', lang = 'fa') {
+  const data = await getLiveRates(env);
+  const { time, date } = formatDateTime(data.updatedAt);
+  const name = (k) => (lang === 'en' ? RATES_CATEGORIES[k].en : RATES_CATEGORIES[k].fa);
+  const lines = [`📈 ${tr('جدول قیمت‌های لحظه‌ای', 'Live price table', lang)}\n🕐 ${time} · ${date}\n────────────────────`];
+  const cats = category === 'all' ? ['gold', 'fiat', 'crypto'] : [category];
+  const table = { gold: data.gold, fiat: data.fiat, crypto: data.crypto };
+  for (const k of cats) {
+    const items = table[k];
+    if (!items) continue;
+    lines.push(`\n${name(k)}`);
+    const keys = k === 'gold' ? ['gold18', 'gold24', 'emami', 'bahar'] : k === 'fiat' ? ['usd', 'eur', 'aed', 'gbp', 'try'] : ['usdt', 'btc', 'eth', 'ton'];
+    for (const key of keys) {
+      const item = items[key];
+      if (!item) continue;
+      const priceStr = item.isUsd ? `$${fmtMoney(item.price, lang)}` : k === 'crypto' ? `${fmtMoney(item.priceToman, lang)} ${tr('تومان', 'Toman', lang)}` : `${fmtMoney(item.price, lang)} ${tr('تومان', 'Toman', lang)}`;
+      lines.push(`• ${lang === 'en' ? item.en : item.fa}: ${priceStr} (${item.change > 0 ? '🟢 +📈' : item.change < 0 ? '🔴 -' : '⚪'} ${Math.abs(item.change)}%)`);
+    }
+  }
+  lines.push('\n────────────────────');
+  return lines.join('\n');
+}
+
+export async function ratesDestinations(env, override = []) {
+  const list = (Array.isArray(override) && override.length ? override : (await getSettings(env)).rates?.autoSend?.destinations || [])
+    .map(d => typeof d === 'string' ? { chatId: d, title: '' } : d)
+    .filter(d => d.chatId && isChatId(d.chatId));
+  return list.slice(0, 10);
+}
+
+export async function sendRatesNow(env, { category = 'all', destinations = [] } = {}) {
+  const token = await resolveToken(env);
+  assert(token, 'token_missing');
+  const targets = await ratesDestinations(env, destinations);
+  assert(targets.length, 'invalid_destinations');
+  const text = (await liveRatesDigestText(env, category)).slice(0, 4096);
+  const results = [];
+  for (const d of targets) {
+    const res = await sendToUser(token, d.chatId, text, { disable_web_page_preview: true });
+    results.push({ chatId: d.chatId, title: d.title || '', ok: !!res.ok, error: res.ok ? '' : str(res.description || '', 160) });
+  }
+  return { category, sent: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length, results };
+}
+
+const RATES_STATE_KEY = 'v2:rates:state';
+export async function ratesTick(env) {
+  const cfg = (await getSettings(env)).rates?.autoSend;
+  if (!cfg?.enabled || !cfg.time || !isValidTime(cfg.time) || !cfg.destinations?.length) return;
+  const token = await resolveToken(env);
+  if (!token) return;
+  const state = (await getJson(env, RATES_STATE_KEY)) || { lastDay: '', lastAt: 0 };
+  const now = Date.now();
+  const today = tehranDate(now);
+  if (state.lastDay === today) return;
+  if (now < tehranTodayAt(cfg.time, now)) return;
+  const category = RATES_SEND_CATS.includes(cfg.category) ? cfg.category : 'all';
+  const text = (await liveRatesDigestText(env, category)).slice(0, 4096);
+  for (const d of cfg.destinations.slice(0, 10)) {
+    if (!isChatId(d.chatId)) continue;
+    const res = await sendToUser(token, d.chatId, text, { disable_web_page_preview: true });
+    if (!res.ok && res.description) state.lastError = str(res.description, 160);
+  }
+  state.lastDay = today;
+  state.lastAt = now;
+  await putJson(env, RATES_STATE_KEY, state);
 }
