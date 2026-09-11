@@ -12,11 +12,29 @@ export async function tgApi(token, method, payload = {}) {
       method: 'POST', headers: form ? undefined : { 'content-type': 'application/json' },
       body: form ? payload : JSON.stringify(payload), signal: AbortSignal.timeout(form ? 60000 : 12000),
     });
-    return await res.json().catch(() => ({ ok: false, error_code: res.status, description: 'telegram_invalid_response' }));
+    const data = await res.json().catch(() => ({ ok: false, error_code: res.status, description: 'telegram_invalid_response' }));
+    if (!data.ok && payload && (form ? payload.has('reply_markup') : payload.reply_markup) && rejectedMarkup(data.description)) {
+      // A keyboard Telegram refuses (over-long callback data, a non-https Web App
+      // URL, …) used to swallow the whole reply — /start looked dead until the
+      // offending button was deleted. Deliver the text without the buttons.
+      const retry = form ? payload : { ...payload };
+      if (form) retry.delete('reply_markup'); else delete retry.reply_markup;
+      const plain = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+        method: 'POST', headers: form ? undefined : { 'content-type': 'application/json' },
+        body: form ? retry : JSON.stringify(retry), signal: AbortSignal.timeout(form ? 60000 : 12000),
+      });
+      return plain.json().catch(() => ({ ok: false, error_code: plain.status, description: 'telegram_invalid_response' }));
+    }
+    return data;
   } catch {
     // Never include an exception URL: Telegram URLs contain the bot credential.
     return { ok: false, error_code: 0, description: 'telegram_network_error', uncertain: true };
   }
+}
+// Telegram reports a bad inline keyboard with these 400s; only those are worth
+// retrying, anything else (blocked user, missing chat) is returned as-is.
+function rejectedMarkup(description) {
+  return /button|keyboard|reply markup|BUTTON_DATA_INVALID|can't parse/i.test(String(description || ''));
 }
 // Button taps must refresh the open message instead of stacking a new one in the chat.
 // A callback handler opens an edit slot; the first reply to that same chat edits the

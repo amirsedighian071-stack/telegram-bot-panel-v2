@@ -43,6 +43,32 @@ export const isChatId = id => /^-?[1-9]\d{0,15}$/.test(String(id)) || /^@[a-zA-Z
 export const isGroupId = id => /^-[1-9]\d{3,15}$/.test(String(id));
 export const id = () => crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 export const str = (v, max = 500) => String(v ?? '').trim().slice(0, max);
+// Telegram measures `callback_data` in UTF-8 bytes (1–64), not characters. A
+// Persian or emoji value that looks short in the panel can blow that limit and
+// make Telegram reject the *whole* keyboard with a 400 — the bot then looks
+// dead. Everything that builds a keyboard must measure and cut in bytes.
+const utf8Bytes = (v) => new TextEncoder().encode(String(v ?? ''));
+export const byteLength = (v) => utf8Bytes(v).length;
+// Truncate to at most `max` UTF-8 bytes without splitting a code point, so the
+// result is always valid UTF-8 (a split surrogate pair would poison the JSON
+// body Telegram receives).
+export function cutBytes(v, max) {
+  const s = String(v ?? '');
+  if (utf8Bytes(s).length <= max) return s;
+  let out = '', used = 0;
+  for (const ch of s) {
+    const n = utf8Bytes(ch).length;
+    if (used + n > max) break;
+    out += ch; used += n;
+  }
+  return out;
+}
+// Button labels: drop unpaired surrogates (they would poison the JSON body
+// Telegram receives), then cut to `max` characters — the Bot API counts button
+// text in characters, not bytes.
+export const label = (v, max = 64) => String(v ?? '')
+  .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+  .trim().slice(0, max);
 export function int(v, min, max, fallback) {
   const n = Number(v);
   return Number.isSafeInteger(n) && n >= min && n <= max ? n : fallback;

@@ -4,6 +4,7 @@ import { requireAuth } from '../auth.js';
 import { DEFAULT_MENU, getMenu, saveMenu, getSettings } from '../kv.js';
 import { resolveToken, sendStart } from '../telegram.js';
 import { readJson } from '../body.js';
+import { label, cutBytes } from '../config.js';
 
 const r = new Hono();
 r.use('*', requireAuth);
@@ -19,14 +20,18 @@ function sanitizeButtons(input, validSubIds, { maxRows = 10 } = {}) {
     if (!Array.isArray(row)) continue;
     const btns = [];
     for (const b of row.slice(0, 8)) {
-      const text = String((b && b.text) || '').trim().slice(0, 64);
+      const text = label(b && b.text, 64);
       if (!text) continue;
       const type = ['url', 'callback', 'submenu', 'text'].includes(b.type) ? b.type : 'callback';
       const value = String((b && b.value) || '').trim();
       if (type === 'url') {
         if (/^https?:\/\//i.test(value)) btns.push({ text, type, value: value.slice(0, 512) });
       } else if (type === 'callback') {
-        if (value.length >= 1 && value.length <= 64) btns.push({ text, type, value });
+        // Telegram counts callback_data in UTF-8 bytes, so a long Persian value
+        // must be cut here — otherwise the whole home keyboard is rejected and
+        // the bot stops replying to /start.
+        const safe = cutBytes(value, 64);
+        if (safe) btns.push({ text, type, value: safe });
       } else if (type === 'submenu') {
         if (SUBMENU_ID_RE.test(value) && validSubIds.has(value)) btns.push({ text, type, value });
       } else if (type === 'text') {

@@ -109,7 +109,7 @@ export function withMenuDefaults(menu = {}) {
       submenus[id] = {
         title: String(sm.title || '').slice(0, 64),
         text: String(sm.text || '').slice(0, 3500),
-        buttons: Array.isArray(sm.buttons) ? sm.buttons : [],
+        buttons: Array.isArray(sm.buttons) ? sm.buttons.filter((row) => Array.isArray(row)) : [],
       };
     }
   }
@@ -130,7 +130,7 @@ export function withMenuDefaults(menu = {}) {
       en: menu?.help?.en ?? DEFAULT_MENU.help.en,
     },
     inlineButtons: Array.isArray(menu?.inlineButtons) && menu.inlineButtons.length
-      ? menu.inlineButtons
+      ? menu.inlineButtons.filter((row) => Array.isArray(row))
       : deepClone(DEFAULT_MENU.inlineButtons),
     submenus: Object.keys(submenus).length ? submenus : deepClone(DEFAULT_MENU.submenus),
   };

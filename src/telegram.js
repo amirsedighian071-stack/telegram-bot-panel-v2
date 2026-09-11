@@ -10,7 +10,7 @@ import { getJson, putJson } from './kv.js';
 import { tgApi, resolveToken, sendToUser, beginMessageEdit, endMessageEdit } from './bot-api.js';
 export { tgApi, resolveToken, sendToUser } from './bot-api.js';
 import { membershipGate, sendMembershipLock, joinUrl } from './gate.js';
-import { PURPOSES, enabled, text as tr, assert, str } from './config.js';
+import { PURPOSES, enabled, text as tr, assert, str, label, cutBytes, httpsUrl } from './config.js';
 import { entityKey, allEntities } from './storage.js';
 import { commerceMessage, commerceCallback, catalog, showProduct, showCart, myOrders, checkoutError, resumeMemberDeliveries, searchProducts } from './commerce.js';
 import { completeSignup, showPoints, progress } from './crm.js';
@@ -94,9 +94,9 @@ export function effectiveLang(user, settings) {
 function withSupport(rows, settings, lang) {
   const sb = settings && settings.supportButton;
   if (!sb || !sb.enabled || !enabled(settings, 'support')) return rows || [];
-  const has = (rows || []).some((r) => (r || []).some((b) => b && b.type === 'callback' && b.value === 'support:open'));
+  const has = (rows || []).some((r) => Array.isArray(r) && r.some((b) => b && b.type === 'callback' && b.value === 'support:open'));
   if (has) return rows || [];
-  const text = String((lang === 'en' ? sb.en : sb.fa) || sb.fa || '🛡 پشتیبانی').slice(0, 64);
+  const text = label((lang === 'en' ? sb.en : sb.fa) || sb.fa || '🛡 پشتیبانی', 64);
   return [...(rows || []), [{ text, type: 'callback', value: 'support:open' }]];
 }
 
@@ -107,22 +107,56 @@ export function renderTpl(text = '', user = {}) {
     .replace(/\{id\}/g, String(user.id || ''));
 }
 
+// A single malformed button makes Telegram reject the entire sendMessage with a
+// 400, which used to look like "the bot is dead" (no reply to /start at all).
+// Every keyboard the bot sends is built here, so an unusable button is trimmed
+// when it can be and dropped when it cannot — it is never fatal.
+function telegramButton(b) {
+  if (!b || typeof b !== 'object') return null;
+  const text = label(b.text, 64);
+  if (!text) return null;
+  if (b.type === 'web_app' || b.web_app) {
+    const url = String((b.web_app && b.web_app.url) || b.value || '').trim();
+    // Web App buttons only accept https; anything else would sink the keyboard.
+    return httpsUrl(url) ? { text, web_app: { url: cutBytes(url, 512) } } : null;
+  }
+  if (b.type === 'url') {
+    const url = String(b.value || '').trim();
+    return /^(https?|tg):\/\//i.test(url) ? { text, url: cutBytes(url, 512) } : null;
+  }
+  if (b.type === 'submenu') {
+    const value = cutBytes(String(b.value || '').trim(), 32);
+    return value ? { text, callback_data: `sub:${value}` } : null;
+  }
+  if (b.type === 'text') {
+    const src = String(b._src || 'root'), r = Number.isFinite(+b._r) ? +b._r : 0, c = Number.isFinite(+b._c) ? +b._c : 0;
+    return { text, callback_data: cutBytes(`txt:${src}:${r}:${c}`, 64) };
+  }
+  // Callback values are limited to 64 *bytes*, so a long Persian value is cut
+  // here instead of taking the whole keyboard down with it.
+  const value = cutBytes(String(b.value || '').trim(), 64);
+  return { text, callback_data: value || 'noop' };
+}
+
 export function pageMarkup(rows, { withBack = false, T = BOT_T.fa } = {}) {
-  const kb = rows.map((row) =>
-    row.map((b) => {
-      if (b.type === 'web_app' || b.web_app) return { text: b.text, web_app: b.web_app || { url: b.value } };
-      if (b.type === 'url') return { text: b.text, url: b.value };
-      if (b.type === 'text') return { text: b.text, callback_data: `txt:${b._src || 'root'}:${b._r}:${b._c}` };
-      if (b.type === 'submenu') return { text: b.text, callback_data: `sub:${b.value}` };
-      return { text: b.text, callback_data: String(b.value || 'noop').slice(0, 64) };
-    })
-  );
-  if (withBack) kb.push([{ text: T.back, callback_data: 'sub:root' }]);
+  const kb = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!Array.isArray(row)) continue;
+    const line = [];
+    for (const b of row) {
+      const btn = telegramButton(b);
+      if (btn) line.push(btn);
+    }
+    if (line.length) kb.push(line.slice(0, 8));
+  }
+  if (withBack) kb.push([{ text: label(T.back, 64), callback_data: 'sub:root' }]);
   return { inline_keyboard: kb };
 }
 
 function tagButtons(rows, src) {
-  return rows.map((row, r) => row.map((b, c) => ({ ...b, _src: src, _r: r, _c: c })));
+  return (Array.isArray(rows) ? rows : [])
+    .map((row, r) => (Array.isArray(row) ? row : []).map((b, c) => ({ ...(b || {}), _src: src, _r: r, _c: c })))
+    .filter((row) => row.length);
 }
 
 export function customButtonsOf(menu) {
@@ -130,7 +164,7 @@ export function customButtonsOf(menu) {
   // back to the stock defaults in storage, but a default-bot home must stay
   // empty until the admin adds its own buttons.
   if (!menu || !Array.isArray(menu.explicitInlineButtons)) return [];
-  return menu.explicitInlineButtons;
+  return menu.explicitInlineButtons.filter((row) => Array.isArray(row) && row.length);
 }
 // The rows that make up the root (home) screen, shared by the inline markup and
 // by the `txt:` popup lookup so both always agree on positions.
