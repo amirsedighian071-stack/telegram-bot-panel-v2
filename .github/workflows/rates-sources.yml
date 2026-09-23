@@ -1,0 +1,35 @@
+name: rates-sources
+
+# Manual diagnostics for the live-rates module: fetches every configured market
+# feed the way src/rates.js does and prints which ones that network can reach,
+# how many quotes each delivered and what the merged table looks like. Run it
+# from the Actions tab (Run workflow) when the panel says the market is
+# unreachable — the log shows whether a feed, its relay, or the whole egress is
+# the problem.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/probe-rate-sources.mjs'
+      - '.github/workflows/rates-sources.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Probe every rate source
+        run: node scripts/probe-rate-sources.mjs --json rates-probe.json
+      - name: Upload the probe report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rates-probe
+          path: rates-probe.json
+          if-no-files-found: ignore

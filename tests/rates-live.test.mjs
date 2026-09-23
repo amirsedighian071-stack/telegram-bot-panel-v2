@@ -255,3 +255,225 @@ test('tracker quotes alone are enough to keep the table plausible offline', asyn
   assert.equal(rates.crypto.usdt.priceToman, 228454);
   assert.match(rates.source, /alanchand/);
 });
+
+/* ============ Feed resilience ============
+ * The Iranian hosts are the ones a Worker is most likely to be cut off from, so
+ * the table must stay current through the global key-less feeds and through the
+ * light TGJU widget endpoint rather than fall back to a "connection failed"
+ * badge. Fixtures below are the live payload shapes of those endpoints. */
+
+const tgjuWidgetPayload = () => ({
+  response: { indicators: [
+    { name: 'price_dollar_rl', p: '2317050', h: '2327200', l: '2302600', dp: 0.65 },
+    { name: 'price_eur', p: '2643200', dp: 0.97 },
+    { name: 'price_iqd', p: '1490', dp: 1.48 },
+    { name: 'tgju_gold_irg18', p: '236891000', h: '236891000', l: '233451000', dp: 1.39 },
+    { name: 'sekeb', p: '2322250000', dp: 0.46 },
+    { name: 'mesghal', p: '1029530000', dp: 0.73 },
+    { name: 'tether_gold_xaut', p: '4289.75', h: '4363.72', l: '4281.96', dp: 1.58 },
+  ] },
+});
+
+const coingeckoPayload = () => ({
+  tether: { usd: 0.9998, usd_24h_change: -0.01 },
+  bitcoin: { usd: 84382.9957, usd_24h_change: -2.47 },
+  ethereum: { usd: 2671.6277, usd_24h_change: -2.93 },
+  tron: { usd: 0.3401, usd_24h_change: -0.43 },
+  'the-open-network': { usd: 1.4077, usd_24h_change: -3.22 },
+  solana: { usd: 114.5297, usd_24h_change: -3.04 },
+  notcoin: { usd: 0.0005, usd_24h_change: -8.47 },
+});
+
+const rateJsonPayload = () => ({ generated_by_tomanify_at: '2026-09-22', values: { USD: 233200, EUR: 266890, AED: 63522, TRY: 4867, CNY: 34820 } });
+
+test('the light TGJU widget feed answers without the megabyte ajax feed', async () => {
+  const env = marketEnv();
+  tg.setOverride((u) => {
+    if (u.includes('api.tgju.org')) return tgjuWidgetPayload();
+    if (u.includes('tgju.org')) throw new Error('mirrors offline');
+    if (u.includes('nobitex.ir')) return nobitexPayload();
+    throw new Error('offline');
+  });
+  const rates = await getLiveRates(env);
+  assert.equal(rates.stale, false);
+  assert.match(rates.source, /tgju/);
+  // Widget quotes are Rial too: 2,317,050 → 231,705 Toman.
+  assert.equal(rates.fiat.usd.price, 231705);
+  assert.equal(rates.fiat.eur.price, 264320);
+  assert.equal(rates.fiat.iqd.price, 14900, 'the dinar row is the 100-dinar quote');
+  assert.equal(rates.gold.gold18.price, 23689100);
+  assert.equal(rates.gold.ounce.price, 4289.75);
+  assert.equal(rates.crypto.usdt.priceToman, 901000);
+  const tgjuDiag = rates.diagnostics.find(d => d.name === 'tgju');
+  assert.equal(tgjuDiag.ok, true);
+  assert(tgjuDiag.hits > 0);
+});
+
+test('TGJU keeps priority whichever feed answers first', async () => {
+  const env = marketEnv();
+  tg.setOverride((u) => {
+    // TGJU answers last, but its quote must still win over Nobitex's USDT mirror.
+    if (u.includes('tgju.org')) return new Promise(resolve => setTimeout(() => resolve(Response.json(tgjuPayload())), 20));
+    if (u.includes('nobitex.ir')) return nobitexPayload();
+    throw new Error('offline');
+  });
+  const rates = await getLiveRates(env);
+  assert.equal(rates.fiat.usd.price, 90000);
+  assert.equal(rates.crypto.usdt.priceToman, 901000);
+});
+
+test('when every Iranian host is blocked the global feeds keep the table fresh', async () => {
+  const env = marketEnv();
+  tg.setOverride((u) => {
+    if (u.includes('coingecko.com')) return coingeckoPayload();
+    if (u.includes('gold-api.com')) return { currency: 'USD', price: 4290.399902, symbol: 'XAU' };
+    if (u.includes('rate-json')) return rateJsonPayload();
+    if (u.includes('er-api.com')) return { result: 'success', rates: { USD: 1, EUR: 0.873207, GBP: 0.749328, AED: 3.6725, TRY: 48.831559, CNY: 6.71347, CAD: 1.405443 } };
+    throw new Error('offline');
+  });
+  const rates = await getLiveRates(env);
+  assert.equal(rates.stale, false, 'a blocked Iranian market must not blank the table');
+  assert.equal(rates.offline, undefined);
+  // Free-market quotes still arrive in Toman…
+  assert.equal(rates.fiat.usd.price, 233200);
+  assert.equal(rates.fiat.eur.price, 266890);
+  // …and the gold rows are calculated from the live ounce and dollar, so they
+  // stay within a few percent of the Tehran market instead of being old static.
+  assert(rates.derived > 0);
+  assert.match(rates.source, /derived/);
+  assert(rates.gold.gold18.price > 22000000 && rates.gold.gold18.price < 25000000, 'calculated 18K gold must stay in market range');
+  assert(rates.gold.emami.price > 220000000 && rates.gold.emami.price < 260000000);
+  assert(rates.gold.gold18.derived === true);
+  // The cross-currency rows follow the live dollar.
+  assert(rates.fiat.cad.price > 150000 && rates.fiat.cad.price < 180000);
+  // Crypto in Toman follows the live USD legs.
+  assert(rates.crypto.btc.priceToman > 18000000000 && rates.crypto.btc.priceToman < 21000000000);
+  assert(rates.crypto.eth.priceToman > 600000000 && rates.crypto.eth.priceToman < 650000000, 'USD legs are converted with the live dollar');
+  assert.equal(rates.crypto.usdt.priceToman, 233200);
+  // And every failure is named for the panel's status list.
+  const blocked = rates.diagnostics.filter(d => !d.ok).map(d => d.name);
+  assert(blocked.includes('tgju') && blocked.includes('nobitex') && blocked.includes('alanchand'));
+  assert(rates.diagnostics.every(d => typeof d.ms === 'number'));
+  assert.equal(rates.diagnostics.find(d => d.name === 'fx').ok, true, 'the world-rate reference is reported as reachable');
+});
+
+test('a total blackout still reports the reason next to the saved snapshot', async () => {
+  const env = marketEnv();
+  tg.setOverride((u) => {
+    if (u.includes('tgju.org')) return tgjuPayload();
+    if (u.includes('nobitex.ir')) return nobitexPayload();
+    throw new Error('offline');
+  });
+  await getLiveRates(env);
+  await env.BOT_KV.delete('v2:rates:cache');
+  tg.setOverride(() => { throw new Error('offline'); });
+  const stale = await getLiveRates(env);
+  assert.equal(stale.stale, true);
+  assert.equal(stale.gold.gold18.price, 4500000, 'the saved snapshot is still served');
+  assert(stale.diagnostics.some(d => !d.ok && d.error), 'the failure of this attempt stays visible');
+});
+
+test('force refresh skips the one-minute cache', async () => {
+  const env = marketEnv();
+  let calls = 0;
+  tg.setOverride((u) => {
+    if (u.includes('tgju.org')) return tgjuPayload();
+    if (u.includes('nobitex.ir')) { calls++; return nobitexPayload(); }
+    throw new Error('offline');
+  });
+  await getLiveRates(env);
+  const cached = await getLiveRates(env);
+  assert.equal(cached.gold.gold18.price, 4500000);
+  assert.equal(calls, 1, 'the second call is served from the minute cache');
+  await getLiveRates(env, { force: true });
+  assert(calls >= 2, 'force bypasses the cache for the diagnostics endpoint');
+});
+
+test('the panel can ask which rate sources answered', async () => {
+  const h = await setup();
+  tg.setOverride((u) => {
+    if (u.includes('tgju.org')) return tgjuPayload();
+    if (u.includes('nobitex.ir')) return nobitexPayload();
+    throw new Error('offline');
+  });
+  const res = await h.api('GET', '/rates/sources');
+  assert.equal(res.ok, true);
+  const names = res.data.sources.map(s => s.name);
+  assert(names.includes('tgju') && names.includes('nobitex') && names.includes('alanchand'), 'every feed is listed: ' + names.join(','));
+  assert.equal(res.data.sources.find(s => s.name === 'tgju').ok, true);
+  assert.equal(res.data.sources.find(s => s.name === 'nobitex').ok, true);
+  assert.equal(res.data.sources.find(s => s.name === 'alanchand').ok, false);
+  assert(res.data.labels.tgju.fa, 'labels come with the report');
+  assert.equal(res.data.stale, false);
+  const live = await h.api('GET', '/rates/live');
+  assert(Array.isArray(live.data.diagnostics) && live.data.diagnostics.length > 5, 'the table carries its own diagnostics');
+  assert.equal(typeof live.data.derived, 'number');
+});
+
+/* ---------- The relay transport ----------
+ * A Cloudflare Worker is refused by several Iranian market hosts, so a failed
+ * direct fetch is retried through a public read-through relay. The relay is only
+ * a transport: its payload is parsed and range-checked exactly like a direct one. */
+const jinaWrap = (json) => 'Title: \n\nURL Source: https://api.tgju.org/…\n\nMarkdown Content:\n' + JSON.stringify(json) + '\n';
+const widgetPayload = () => ({
+  response: {
+    indicators: [
+      { name: 'tgju_gold_irg18', p: '236,891,000', h: '236,941,000', l: '233,451,000', dp: 1.41 },
+      { name: 'sekee', p: '2,364,800,000', dp: 0.43 },
+      { name: 'price_dollar_rl', p: '2,317,050', dp: 0.65 },
+      { name: 'price_eur', p: '2,643,200', dp: 0.31 },
+      { name: 'price_iqd', p: '1,490', dp: 0.1 },
+      { name: 'ons', p: '4289.75', dp: -0.35 },
+    ],
+  },
+});
+
+test('a host that refuses the Worker is retried through the relay', async () => {
+  const seen = [];
+  tg.setOverride((u) => {
+    seen.push(u);
+    if (u.startsWith('https://r.jina.ai/')) return new Response(jinaWrap(widgetPayload()), { headers: { 'content-type': 'text/plain' } });
+    if (u.includes('nobitex.ir')) return nobitexPayload();
+    if (u.includes('coingecko')) return {};
+    throw new Error('offline');
+  });
+  const kv = marketEnv();
+  const rates = await getLiveRates(kv);
+  assert.equal(rates.stale, false);
+  assert.ok(seen.some(u => u.startsWith('https://r.jina.ai/https://api.tgju.org/')), 'the widget URL is relayed');
+  // Same numbers, same normalization as a direct answer.
+  assert.equal(rates.gold.gold18.price, 23689100);
+  assert.equal(rates.gold.emami.price, 236480000);
+  assert.equal(rates.fiat.usd.price, 231705);
+  assert.equal(rates.fiat.iqd.price, 14900);
+  assert.equal(rates.gold.ounce.price, 4289.75);
+  const tgju = rates.diagnostics.find(d => d.name === 'tgju');
+  assert.equal(tgju.ok, true);
+  assert.equal(tgju.hits, 6);
+  assert.equal(tgju.via, 'jina', 'the diagnostics name the transport that delivered the feed');
+});
+
+test('fenced relay bodies are unwrapped, and global feeds are never relayed', async () => {
+  const seen = [];
+  tg.setOverride((u) => {
+    seen.push(u);
+    if (u.startsWith('https://r.jina.ai/')) return '```json\n' + JSON.stringify(nobitexPayload()) + '\n```';
+    throw new Error('offline');
+  });
+  const rates = await getLiveRates(marketEnv());
+  // Everything is blocked, yet the table is still served (as a saved snapshot).
+  assert.equal(rates.stale, true);
+  assert.ok(seen.some(u => u.startsWith('https://r.jina.ai/http')), 'Iranian hosts were relayed');
+  assert.equal(seen.some(u => u.startsWith('https://r.jina.ai/') && /coingecko|kraken|gold-api|rate-json|er-api|jsdelivr/.test(u)), false,
+    'global feeds are never sent through the relay');
+});
+
+test('the relayed payload still has to pass the range checks', async () => {
+  tg.setOverride((u) => {
+    if (u.startsWith('https://r.jina.ai/')) return jinaWrap({ response: { indicators: [{ name: 'price_dollar_rl', p: '12' }] } });
+    throw new Error('offline');
+  });
+  const rates = await getLiveRates(marketEnv());
+  assert.equal(rates.stale, true, 'an implausible relayed quote does not count as a live source');
+  assert.equal(rates.fiat.usd.price, 233200, 'the static baseline is kept');
+});

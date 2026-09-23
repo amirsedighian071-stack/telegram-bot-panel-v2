@@ -312,7 +312,7 @@ function vRatesSettingsSection(s) {
     + vCheck('v-rates-on', L('ارسال خودکار روزانه فعال باشد', 'Enable daily automatic sending'), r.enabled)
     + `<div class="grid sm:grid-cols-2 gap-4">${vSelect('v-rates-cat', L('نوع ارز برای ارسال', 'Asset type to publish'), RATES_CATS, r.category)}${vField('v-rates-time', L('ساعت روزانه ارسال (تهران)', 'Daily delivery time (Tehran)'), r.time || '09:00', 'type="time"')}</div>`
     + vArea('v-rates-dest', L('مقصدها؛ هر خط: عنوان | آیدی کانال یا گروه', 'Destinations; one per line: Title | Channel/Group ID'), (r.destinations || []).map(d => `${d.title || 'مقصد'} | ${d.chatId}`).join('\n'), 3, 'dir="ltr" placeholder="کانال قیمت | @rateschannel"')
-    + `<div class="v-divider"></div><h4 class="text-sm font-bold mb-3">${L('ارسال فوری به کانال یا گروه', 'Send now to a channel/group')}</h4><div class="grid sm:grid-cols-2 gap-4">${vSelect('v-rates-send-cat', L('نوع ارز این ارسال', 'Asset type to send'), RATES_CATS, r.category)}</div><div class="v-actions !justify-start mt-3">${vButton(vIcon('radio-tower') + L('ارسال فوری قیمت', 'Send rates now'), 'vRatesSendNow', '', true)}${vButton(L('پیش‌نمایش جدول قیمت', 'Preview rate table'), 'vRatesPreview')}</div><div id="v-rates-preview" class="mt-3"></div><div class="v-divider"></div><h4 class="text-sm font-bold mb-3 flex items-center gap-2">${vIcon('line-chart')}${L('جدول زنده بازار ایران', 'Live Iran-market table')}</h4><div class="v-actions !justify-start mb-3">${vButton(L('بروزرسانی جدول', 'Refresh table'), 'vRatesLive')}</div><div id="v-rates-live"></div>`,
+    + `<div class="v-divider"></div><h4 class="text-sm font-bold mb-3">${L('ارسال فوری به کانال یا گروه', 'Send now to a channel/group')}</h4><div class="grid sm:grid-cols-2 gap-4">${vSelect('v-rates-send-cat', L('نوع ارز این ارسال', 'Asset type to send'), RATES_CATS, r.category)}</div><div class="v-actions !justify-start mt-3">${vButton(vIcon('radio-tower') + L('ارسال فوری قیمت', 'Send rates now'), 'vRatesSendNow', '', true)}${vButton(L('پیش‌نمایش جدول قیمت', 'Preview rate table'), 'vRatesPreview')}</div><div id="v-rates-preview" class="mt-3"></div><div class="v-divider"></div><h4 class="text-sm font-bold mb-3 flex items-center gap-2">${vIcon('line-chart')}${L('جدول زنده بازار ایران', 'Live Iran-market table')}</h4><div class="v-actions !justify-start mb-3">${vButton(L('بروزرسانی جدول', 'Refresh table'), 'vRatesLive')}${vButton(vIcon('plug-zap') + L('بررسی منابع نرخ', 'Check rate sources'), 'vRatesSources')}</div><div id="v-rates-live"></div><div id="v-rates-sources" class="mt-3"></div>`,
     vButton(t('save'), 'vSaveRatesSettings', '', true), { icon: 'line-chart' });
 }
 ACTIONS.vSaveRatesSettings = () => vSaveSettings({ rates: { autoSend: vRatesConfig() } });
@@ -326,6 +326,21 @@ const vRatesTrend = (ch) => {
   const ic = v > 0 ? 'trending-up' : v < 0 ? 'trending-down' : 'minus';
   return `<span class="${cls} inline-flex items-center gap-1">${vIcon(ic)}${v > 0 ? '+' : ''}${fmtNum(v)}%</span>`;
 };
+const vRatesSourceName = (name, labels) => {
+  const label = labels?.[name];
+  return label ? (S.lang === 'en' ? label.en : label.fa) : name;
+};
+// Which feeds answered, which ones failed and why — the panel used to only say
+// «اتصال ناموفق», which hid the fact that the Iranian hosts are blocked while
+// the global feeds are still keeping the table fresh.
+function vRatesSourcesHtml(d) {
+  const list = d?.sources || d?.diagnostics || [];
+  if (!list.length) return '';
+  return `<details class="v-media-details"><summary>${vIcon('plug-zap')}${L('وضعیت منابع نرخ', 'Rate source status')}</summary><div class="pt-3">` +
+    list.map(s => `<div class="v-row !py-1.5"><div class="v-row-main"><p class="text-xs font-semibold">${esc(vRatesSourceName(s.name, d.labels))}${s.kind === 'reference' ? ` · ${L('مرجع محاسبه', 'calculation reference')}` : ''}${s.via ? ` · ${L('از طریق رله', 'via relay')} ${esc(s.via)}` : ''}</p>${s.error ? `<p class="v-meta" dir="ltr">${esc(s.error)}</p>` : ''}</div>` +
+      `<div class="text-end shrink-0"><span class="v-badge ${s.ok ? 'good' : 'warn'}">${s.ok ? '✓' + (s.hits ? ' ' + fmtNum(s.hits) : '') : '✗'}</span><p class="v-meta">${fmtNum(s.ms || 0)} ms</p></div></div>`).join('') +
+    `</div></details>`;
+}
 function vRatesLiveHtml(d) {
   const unit = L('تومان', 'toman');
   const nm = (item) => esc(S.lang === 'en' ? item.en : item.fa);
@@ -338,16 +353,20 @@ function vRatesLiveHtml(d) {
   const goldOrder = ['gold18', 'gold24', 'mesghal', 'emami', 'bahar', 'nim', 'rob', 'gerami', 'ounce'];
   const fiatOrder = ['usd', 'eur', 'aed', 'gbp', 'try', 'iqd', 'cny', 'cad'];
   const cryptoOrder = ['usdt', 'btc', 'eth', 'ton', 'trx', 'sol', 'not'];
+  const failed = (d.diagnostics || []).filter(s => !s.ok);
   return `<div class="flex flex-wrap items-center gap-2 mb-2">` +
     `<span class="v-badge ${d.stale ? 'warn' : 'good'}">${d.stale ? L('آخرین نرخ ذخیره‌شده (اتصال ناموفق)', 'Last saved rates (market unreachable)') : L('نرخ زنده بازار ایران', 'Live Iran market rates')}</span>` +
     (d.source && d.source !== 'fallback' ? `<span class="v-meta" dir="ltr">${esc(d.source)}</span>` : '') +
     `<span class="v-meta">${fmtDate(d.updatedAt)}</span></div>` +
+    (d.stale && failed.length ? `<div class="mb-2">${failed.slice(0, 3).map(s => `<span class="v-badge warn" dir="ltr">${esc(s.name)}: ${esc(s.error || 'failed')}</span>`).join(' ')}</div>` : '') +
+    (d.derived ? vNote(L(`${fmtNum(d.derived)} ردیف از نرخ‌های زندهٔ جهانی (انس طلا و دلار) محاسبه شده است؛ با سبز شدن منابع بازار ایران، نرخ دقیق همین ردیف‌ها جایگزین می‌شود.`, `${fmtNum(d.derived)} row(s) are calculated from the live global gold and dollar quotes; exact market quotes replace them as soon as the Iranian feeds answer.`)) : '') +
     block('coins', L('طلا و سکه', 'Gold & coins'), goldOrder.filter((k) => g[k]).map((k) =>
       row(nm(g[k]), g[k].isUsd ? '$' + fmtNum(g[k].price) : fmtNum(g[k].price) + ' ' + unit, g[k].change)).join('')) +
     block('banknote', L('ارزهای بازار آزاد', 'Fiat currencies'), fiatOrder.filter((k) => f[k]).map((k) =>
       row(nm(f[k]), fmtNum(f[k].price) + ' ' + unit, f[k].change)).join('')) +
     block('bitcoin', L('رمزارزها و تتر', 'Crypto & Tether'), cryptoOrder.filter((k) => c[k]).map((k) =>
-      row(nm(c[k]), fmtNum(c[k].priceToman) + ' ' + unit + (c[k].priceUsd ? ' · $' + fmtNum(c[k].priceUsd) : ''), c[k].change)).join(''));
+      row(nm(c[k]), fmtNum(c[k].priceToman) + ' ' + unit + (c[k].priceUsd ? ' · $' + fmtNum(c[k].priceUsd) : ''), c[k].change)).join('')) +
+    `<div class="mt-3">${vRatesSourcesHtml(d)}</div>`;
 }
 ACTIONS.vRatesLive = async () => {
   const host = $('v-rates-live');
@@ -357,6 +376,24 @@ ACTIONS.vRatesLive = async () => {
   try {
     const d = await api('/rates/live');
     if (host.isConnected) { host.innerHTML = vRatesLiveHtml(d); host.dataset.loaded = '1'; }
+  } catch (e) { if (host.isConnected) host.innerHTML = vNote(esc(vError(e.message)), true); }
+  finally { delete host.dataset.loading; }
+  refreshIcons();
+};
+// Forces a fresh pull from every source and lists what each one answered, so a
+// failing feed can be named instead of guessed at.
+ACTIONS.vRatesSources = async () => {
+  const host = $('v-rates-sources');
+  if (!host || host.dataset.loading) return;
+  host.dataset.loading = '1';
+  host.innerHTML = `<div class="v-meta">${t('loading')}</div>`;
+  try {
+    const d = await api('/rates/sources');
+    if (host.isConnected) {
+      host.innerHTML = `<div class="flex flex-wrap items-center gap-2 mb-2"><span class="v-badge ${d.stale ? 'warn' : 'good'}">${d.stale ? L('همه منابع قطع بودند', 'Every source was unreachable') : L('بررسی منابع انجام شد', 'Source check finished')}</span>` +
+        (d.derived ? `<span class="v-badge">${L('محاسبه‌شده', 'calculated')}: ${fmtNum(d.derived)}</span>` : '') +
+        `<span class="v-meta" dir="ltr">${esc(d.source || '')}</span></div>` + (vRatesSourcesHtml(d) || vNote(L('منبعی پاسخ نداد.', 'No source answered.'), true));
+    }
   } catch (e) { if (host.isConnected) host.innerHTML = vNote(esc(vError(e.message)), true); }
   finally { delete host.dataset.loading; }
   refreshIcons();
