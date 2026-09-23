@@ -218,6 +218,18 @@ function errorText(code) {
       "پرداخت هنوز نهایی نشده است.",
       "Payment is not finished yet.",
     ),
+    signed_webhook_required: T(
+      "تأیید ترونادو پس از دریافت وب‌هوک امضاشده خودکار انجام می‌شود. اگر پرداخت کرده‌اید کمی صبر کنید.",
+      "Tronado is confirmed automatically by its signed webhook. Please wait after paying.",
+    ),
+    payment_amount_mismatch: T(
+      "مبلغ تأییدشده با فاکتور مطابقت ندارد؛ با پشتیبانی تماس بگیرید.",
+      "The confirmed amount does not match the invoice. Contact support.",
+    ),
+    payment_requires_review: T(
+      "این پرداخت نیازمند بررسی پشتیبانی است؛ دوباره پرداخت نکنید.",
+      "This payment requires support review. Do not pay again.",
+    ),
     payment_not_verified: T(
       "پرداخت هنوز از درگاه تأیید نشده است.",
       "Payment has not been verified.",

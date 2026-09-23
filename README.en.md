@@ -2,7 +2,7 @@
 
 <img src="assets/readme/botpanel-logo.svg" alt="BotPanel" width="120">
 
-# Telegram Bot Admin Panel — v3.5
+# Telegram Bot Admin Panel — v3.6
 
 **A bilingual admin panel for Telegram bots, shops, VPN/service businesses and a customer Mini App — running on Cloudflare Workers**
 
@@ -11,6 +11,8 @@
 `This page is in English. Use the button above for the Persian version.`
 
 </div>
+
+> **v3.6:** Adds Remnawave/Rebecca providers and TonPay/BluPal/QubePay/Tronado funding to the existing Cloudflare-native VPN shop. See the [deployment, test evidence and limitations guide (Persian)](docs/RELEASE-3.6.fa.md). Live provider/gateway compatibility has not been certified.
 
 ---
 

@@ -407,3 +407,21 @@ test('the settings section offers a forced source check wired to its handler', (
   assert.equal(panel.win.__sourcesAction, true, 'its action is registered');
   assert(doc.getElementById('v-rates-sources'), 'its result container exists');
 });
+
+test("modern provider and gateway fields only show relevant credentials and options", () => {
+  panel = bootPanel();
+  const { doc, inject } = panel;
+  const groups = ["pf-token", "pf-login", "pf-squads", "pf-rebecca", "pf-cf", "gw-apikey", "gw-ipn", "gw-wage", "gw-fee", "gw-address"];
+  inject(`document.body.insertAdjacentHTML('beforeend', '<div id="modern-fields">' + ${JSON.stringify(groups)}.map(g => '<div id="m-' + g + '" data-pf="' + g + '"></div>').join('') + '</div>');`);
+  const check = (type, visible) => {
+    inject(`svApplyPf('modern-fields', ${JSON.stringify(type)});`);
+    for (const group of groups)
+      assert.equal(!doc.getElementById("m-" + group).classList.contains("hidden"), visible.includes(group), type + ": " + group);
+  };
+  check("remnawave", ["pf-token", "pf-squads", "pf-cf"]);
+  check("rebecca", ["pf-token", "pf-rebecca", "pf-cf"]);
+  check("tronado", ["gw-apikey", "gw-ipn", "gw-wage", "gw-address"]);
+  check("cubepay", ["gw-apikey", "gw-fee"]);
+  check("tonpay", ["gw-apikey"]);
+  check("blupal", ["gw-apikey"]);
+});
