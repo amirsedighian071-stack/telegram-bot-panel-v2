@@ -1,3 +1,4 @@
+import { ModernProvider, isModernProvider, validateModernOptions } from "./modern-providers.js";
 import { x25519 } from "@noble/curves/ed25519.js";
 import {
   get,
@@ -35,6 +36,16 @@ const standard = [
   "reset",
 ];
 export const PROVIDERS = {
+  remnawave: {
+    label: "Remnawave",
+    capabilities: [...standard, "revoke", "nodes", "inbounds"],
+    hint: "Bearer token؛ Squad UUID؛ زمان محدود؛ API /api/users",
+  },
+  rebecca: {
+    label: "Rebecca",
+    capabilities: [...standard, "revoke", "inbounds", "first_use"],
+    hint: "Bearer token؛ Service ID؛ API v2 ساخت و ویرایش",
+  },
   stock: {
     label: "انبار / فروش دستی",
     capabilities: ["create", "read", "renew"],
@@ -150,6 +161,7 @@ export async function savePanel(env, body, existing = {}) {
   };
   assert(p.title, "panel_title_required");
   assert(p.type === "stock" || publicHTTPS(p.url), "panel_https_required");
+  validateModernOptions(p.type, p.options);
   assert(JSON.stringify(p.options).length < 15000, "panel_options_too_large");
   assert(!p.fallbackPanelId || p.fallbackPanelId !== p.id, "fallback_cycle");
   const seen = new Set([p.id]);
@@ -177,6 +189,13 @@ export async function savePanel(env, body, existing = {}) {
     await env.BOT_KV.delete(key("login", p.id));
   }
   assert(p.type === "stock" || p.credentials, "panel_credentials_required");
+  if (isModernProvider(p.type)) {
+    const secret = await unseal(env, p.credentials);
+    assert(secret.token, "panel_token_required");
+  }
+  // Changing the endpoint or dialect must not reuse an old cookie/token cache.
+  if (existing.url !== p.url || existing.type !== p.type)
+    await env.BOT_KV.delete(key("login", p.id));
   await put(env, "panel", p.id, p);
   return p;
 }
@@ -248,6 +267,7 @@ class Connector {
     this.secret = secret;
     this.type = panel.type;
     this.options = panel.options || {};
+    this.modern = isModernProvider(this.type) ? new ModernProvider(this, normalize) : null;
   }
   get caps() {
     return PROVIDERS[this.type]?.capabilities || [];
@@ -327,7 +347,7 @@ class Connector {
       this.type === "ibsng"
     )
       return this.login();
-    if (this.type === "xui_token")
+    if (this.type === "xui_token" || this.modern)
       return { authorization: "Bearer " + this.secret.token };
     if (this.type === "sui") return { Token: this.secret.token };
     if (this.type === "guard") return { "X-API-Key": this.secret.token };
@@ -383,6 +403,7 @@ class Connector {
       : "/panel/api/inbounds";
   }
   async resources() {
+    if (this.modern) return this.modern.resources();
     if (this.type === "pasarguard") return this.call("/api/groups");
     if (this.type.startsWith("marz"))
       return this.call(
@@ -421,6 +442,7 @@ class Connector {
     return [];
   }
   async health() {
+    if (this.modern) return this.modern.health();
     if (this.type === "stock") return { ok: true, kind: "local_inventory" };
     const start = Date.now();
     let data;
@@ -445,10 +467,12 @@ class Connector {
   }
   async nodes() {
     this.supported("nodes");
+    if (this.modern) return this.modern.nodes();
     return this.call("/api/nodes");
   }
   async reconnectNode(nodeId) {
     this.supported("nodes");
+    if (this.modern) return this.modern.reconnectNode(nodeId);
     // PasarGuard only exposes a global reconnect (POST /api/nodes/reconnect),
     // so a per-node request restarts every node instead of failing.
     if (this.type === "pasarguard")
@@ -457,6 +481,7 @@ class Connector {
     return this.call("/api/node/" + nodeId + "/reconnect", "POST", {});
   }
   async get(account) {
+    if (this.modern) return this.modern.get(account);
     const username = encodeURIComponent(account.username);
     if (isMarzLike(this.type)) {
       const raw = await this.call(
@@ -754,6 +779,7 @@ class Connector {
   }
   async create(a) {
     this.supported("create");
+    if (this.modern) return this.modern.create(a);
     let result;
     if (this.type === "ibsng") return this.ibsCreate(a);
     if (this.type === "alireza_inbound") {
@@ -1048,6 +1074,7 @@ class Connector {
   }
   async update(a, desired) {
     this.supported("renew");
+    if (this.modern) return this.modern.update(a, desired);
     if (isMarzLike(this.type)) {
       const body = { data_limit: desired.dataLimit };
       if (this.type === "marzneshin") {
@@ -1242,6 +1269,7 @@ class Connector {
   }
   async toggle(a, enabled) {
     this.supported("toggle");
+    if (this.modern) return this.modern.toggle(a, enabled);
     if (this.type === "guard")
       return this.call(
         "/api/subscriptions/" + (enabled ? "enable" : "disable"),
@@ -1308,6 +1336,7 @@ class Connector {
   }
   async remove(a) {
     this.supported("delete");
+    if (this.modern) return this.modern.remove(a);
     if (this.type === "guard")
       return this.call("/api/subscriptions", "DELETE", {
         usernames: [a.username],
@@ -1376,6 +1405,7 @@ class Connector {
   }
   async reset(a) {
     this.supported("reset");
+    if (this.modern) return this.modern.reset(a);
     if (this.type === "alireza_inbound") {
       const r = await this.get(a);
       assert(r, "remote_service_missing");
@@ -1431,6 +1461,7 @@ class Connector {
   }
   async revoke(a, newUUID, newSubId) {
     this.supported("revoke");
+    if (this.modern) return this.modern.revoke(a);
     if (this.type === "alireza_inbound") {
       const r = await this.get(a);
       assert(r, "remote_service_missing");
@@ -1519,6 +1550,14 @@ export function prepareAccount(
     expiresAt: plan.days ? epoch() + plan.days * 86400 : 0,
     firstUse: !!plan.firstUse,
   };
+  if (isModernProvider(panel.type)) {
+    validateModernOptions(panel.type, a.options, true);
+    if (panel.type === "remnawave") {
+      assert(username.length <= 36, "invalid_service_name");
+      assert(!a.firstUse, "first_use_not_supported");
+      assert(a.expiresAt > 0, "finite_expiry_required");
+    }
+  }
   if (panel.type === "wgdashboard") {
     const priv = crypto.getRandomValues(new Uint8Array(32));
     a.wgPrivate = b64(priv);

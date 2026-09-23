@@ -4,7 +4,12 @@
 
 The services work was informed by the publicly available functionality and HTTP
 integration interfaces of [Mmd-Amir/Faoxima](https://github.com/Mmd-Amir/Faoxima),
-reviewed at commit `814344b017f19285574bec323d497a4612446bad`.
+initially reviewed at commit `814344b017f19285574bec323d497a4612446bad`.
+The v3.6 extension reviewed public HTTP contracts at Faoxima commit
+`015d970120df6e279546efee4ef2759df520c091` and Remnawave backend contract
+commit `b22970cc88481a7e278b5767721672a18f8b2ada`.
+The new adapters are independently organized JavaScript integrations; no PHP,
+upstream implementation files or upstream branding assets are included.
 That repository includes a GNU GPL version 3 license. Its authors retain their
 rights. This repository does not bundle its PHP application, installer, vendor
 directory, branding, or font assets. Features and supported HTTP contracts are
@@ -13,7 +18,7 @@ license and attribution if importing any upstream implementation or assets in
 future work; this notice does not grant additional rights to third-party code.
 
 See `docs/FAOXIMA-CLOUDFLARE.fa.md` for implemented coverage, differences and
-external dependencies. No production connectivity guarantee is made for upstream
+external dependencies; see also `docs/RELEASE-3.6.fa.md` for the newer adapters. No production connectivity guarantee is made for upstream
 panels, gateways or their untested versions.
 
 ## Runtime and UI dependencies

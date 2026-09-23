@@ -12,6 +12,8 @@ const svBtn = (label, act, data = "", primary = false) =>
 // conditional blocks carry data-pf="<group> [group2 …]" and svApplyPf hides the
 // rest whenever the type dropdown changes.
 const SV_PF_API_PANELS = [
+  "remnawave",
+  "rebecca",
   "marzban",
   "marzban_v1",
   "marzneshin",
@@ -31,9 +33,11 @@ const SV_PF_GROUPS = {
   "pf-api": SV_PF_API_PANELS,
   "pf-url": SV_PF_API_PANELS,
   "pf-login": ["marzban", "marzban_v1", "marzneshin", "pasarguard", "xui", "alireza", "alireza_inbound", "ibsng", "mikrotik"],
-  "pf-token": ["marzban", "marzban_v1", "marzneshin", "pasarguard", "xui_token", "sui", "hiddify", "wgdashboard", "guard"],
+  "pf-token": ["remnawave", "rebecca","marzban", "marzban_v1", "marzneshin", "pasarguard", "xui_token", "sui", "hiddify", "wgdashboard", "guard"],
   "pf-inbound": ["xui", "xui_token", "alireza", "alireza_inbound"],
-  "pf-ids": ["marzban_v1", "marzneshin", "pasarguard"],
+  "pf-ids": ["marzban_v1", "marzneshin", "pasarguard", "guard"],
+  "pf-squads": ["remnawave"],
+  "pf-rebecca": ["rebecca"],
   "pf-interface": ["wgdashboard"],
   "pf-profile": ["ibsng", "mikrotik"],
   "pf-subbase": SV_PF_API_PANELS,
@@ -41,14 +45,16 @@ const SV_PF_GROUPS = {
   "pf-cf": SV_PF_API_PANELS,
   "gw-card": ["manual"],
   "gw-merchant": ["zarinpal", "aqaye", "tetrapay"],
-  "gw-apikey": ["tetrapay", "iranpay3", "zarinpay", "nowpayments", "plisio"],
-  "gw-ipn": ["nowpayments"],
+  "gw-apikey": ["tonpay", "blupal", "cubepay", "tronado","tetrapay", "iranpay3", "zarinpay", "nowpayments", "plisio"],
+  "gw-ipn": ["nowpayments", "tronado"],
   "gw-sandbox": ["zarinpal"],
   "gw-currency": ["crypto", "plisio"],
-  "gw-address": ["crypto", "iranpay3"],
+  "gw-address": ["crypto", "iranpay3", "tronado"],
   "gw-rate": ["crypto"],
   "gw-confirm": ["crypto"],
-  "gw-crypto-block": ["crypto", "plisio", "iranpay3"],
+  "gw-fee": ["cubepay"],
+  "gw-wage": ["tronado"],
+  "gw-crypto-block": ["crypto", "plisio", "iranpay3", "tronado"],
 };
 function svApplyPf(scope, type) {
   const root = typeof scope === "string" ? document.getElementById(scope) : scope;
@@ -304,6 +310,12 @@ vError = (code) => {
       "نام خریدار و تأیید دریافت مبلغ لازم است.",
       "Enter a buyer and confirm the manually received payment.",
     ),
+    invalid_squad_ids: L("شناسه Squad باید UUID معتبر باشد؛ آن را از منابع پنل کپی کنید.", "Enter valid Squad UUIDs from provider resources."),
+    rebecca_service_required: L("شناسه عددی Service ربکا را در پنل یا پلن وارد کنید.", "Set a numeric Rebecca Service ID on the provider or plan."),
+    finite_expiry_required: L("این اتصال به مدت محدود نیاز دارد؛ روز را بیشتر از صفر تعیین کنید.", "This provider requires a finite expiry; set days greater than zero."),
+    panel_token_required: L("توکن API پنل الزامی است.", "Provider API token is required."),
+    signed_webhook_required: L("تأیید ترونادو فقط از وب‌هوک امضاشده انجام می‌شود؛ پس از پرداخت منتظر بمانید.", "Tronado requires its signed webhook; wait for the payment notification."),
+    payment_requires_review: L("وضعیت این فاکتور نیازمند بررسی مدیر است.", "This invoice requires administrator review."),
     unmanaged_wireguard_schedule_requires_review: L(
       "Job محدودیت ناشناخته روی peer وجود دارد؛ قبل از تمدید بررسی کنید.",
       "The peer has unmanaged limit jobs. Review before renewing.",
@@ -469,7 +481,7 @@ ACTIONS.svPanelEdit = async (d) => {
       L("نوع پنل / API", "Provider / API"),
       Object.entries(SV.meta.providers).map(([k, v]) => [k, v.label]),
       p.type,
-    )}<div class="sm:col-span-2 -mt-1"><p id="sv-provider-hint" class="v-meta"></p></div>${vField("sv-location", L("موقعیت", "Location"), p.location)}${vField("sv-country", L("کد کشور (NL, DE, …)", "Country code (NL, DE, …)"), p.country, 'dir="ltr" maxlength="2"')}<div data-pf="pf-url">${vField("sv-url", L("نشانی HTTPS پنل (شامل مسیر مخفی در صورت نیاز)", "HTTPS URL (include the panel path)"), p.url, 'dir="ltr" placeholder="https://vpn.example.com/panel-path"')}</div>${vField("sv-capacity", L("سقف تعداد سرویس", "Service capacity"), p.capacity, 'type="number" min="1" max="100000" required')}</div><div data-pf="pf-api"><div class="v-divider"></div>${vNote(L("فیلدهای خالی ورود، رمز قبلی را حفظ می‌کنند. برای انبار دستی اطلاعات ورود لازم نیست. URL باید HTTPS با گواهی معتبر باشد؛ غیرفعال‌کردن اعتبارسنجی TLS پشتیبانی نمی‌شود.", "Leave credential fields blank to keep them. Manual stock requires no login. HTTPS with a valid certificate is mandatory."), !SV.meta.ready.vault)}<div class="grid sm:grid-cols-2 gap-4"><div data-pf="pf-login">${vField("sv-login", L("نام کاربری پنل", "Provider username"), "", 'autocomplete="off" dir="ltr"')}</div><div data-pf="pf-login">${vField("sv-password", L("رمز پنل", "Provider password"), "", 'type="password" autocomplete="new-password" dir="ltr"')}</div><div data-pf="pf-token">${vField("sv-api-token", L("توکن / API Key", "Token / API key"), "", 'type="password" autocomplete="new-password" dir="ltr"')}</div><div data-pf="pf-cf">${vField("sv-cf-id", "CF Access Client ID", "", 'dir="ltr"')}</div><div data-pf="pf-cf">${vField("sv-cf-secret", "CF Access Client Secret", "", 'type="password" dir="ltr"')}</div></div><div class="grid sm:grid-cols-2 gap-4"><div data-pf="pf-inbound">${vField("sv-inbound", L("شناسه inbound (x-ui)", "Inbound ID (x-ui)"), p.options.inboundId || 1, 'type="number" min="1"')}</div><div data-pf="pf-ids">${vField("sv-serviceids", L("Service / Group IDs (با کاما)", "Service / Group IDs (comma-separated)"), (p.options.serviceIds || []).join(","), 'dir="ltr"')}</div><div data-pf="pf-interface">${vField("sv-interface", L("Interface وایرگارد", "WireGuard interface"), p.options.interface || "wg0", 'dir="ltr"')}</div><div data-pf="pf-subbase">${vField("sv-subbase", L("پایه لینک اشتراک؛ در صورت نیاز", "Subscription base URL, if required"), p.options.subscriptionBase, 'dir="ltr"')}</div></div></div><div data-pf="pf-shelf"><div class="grid sm:grid-cols-2 gap-4">${vSelect("sv-shelf", L("قفسه پیش‌فرض انبار", "Default stock shelf"), [["", L("انتخاب قفسه", "Select shelf")], ...shelves.map((s) => [s.id, s.title])], p.options.shelfId || "")}</div></div><div data-pf="pf-profile"><div class="grid sm:grid-cols-2 gap-4">${vField("sv-profile", L("گروه IBSng / Profile میکروتیک", "IBSng group / MikroTik profile"), p.options.profile, 'dir="ltr"')}</div></div><div data-pf="pf-api"><details class="v-media-details"> <summary>${L("تنظیمات پیشرفته پروتکل‌ها و inboundها", "Advanced protocol & inbound settings")}</summary><div class="pt-4">${vArea("sv-options", "JSON", JSON.stringify(p.options || {}, null, 2), 5, 'dir="ltr"')}</div></details></div>${vCheck("sv-enabled", L("فروش روی این پنل فعال باشد", "Enable sales on this provider"), p.enabled)}${vCheck("sv-emergency", L("هدایت فروش جدید به پنل جایگزین", "Route new purchases to an emergency provider"), p.emergency)}${vSelect("sv-fallback", L("پنل جایگزین", "Fallback provider"), [["", L("بدون جایگزین", "No fallback")], ...(SV.cache.panels || []).filter((x) => x.id !== p.id).map((x) => [x.id, x.title])], p.fallbackPanelId || "")}`,
+    )}<div class="sm:col-span-2 -mt-1"><p id="sv-provider-hint" class="v-meta"></p></div>${vField("sv-location", L("موقعیت", "Location"), p.location)}${vField("sv-country", L("کد کشور (NL, DE, …)", "Country code (NL, DE, …)"), p.country, 'dir="ltr" maxlength="2"')}<div data-pf="pf-url">${vField("sv-url", L("نشانی HTTPS پنل (شامل مسیر مخفی در صورت نیاز)", "HTTPS URL (include the panel path)"), p.url, 'dir="ltr" placeholder="https://vpn.example.com/panel-path"')}</div>${vField("sv-capacity", L("سقف تعداد سرویس", "Service capacity"), p.capacity, 'type="number" min="1" max="100000" required')}</div><div data-pf="pf-api"><div class="v-divider"></div>${vNote(L("فیلدهای خالی ورود، رمز قبلی را حفظ می‌کنند. برای انبار دستی اطلاعات ورود لازم نیست. URL باید HTTPS با گواهی معتبر باشد؛ غیرفعال‌کردن اعتبارسنجی TLS پشتیبانی نمی‌شود.", "Leave credential fields blank to keep them. Manual stock requires no login. HTTPS with a valid certificate is mandatory."), !SV.meta.ready.vault)}<div class="grid sm:grid-cols-2 gap-4"><div data-pf="pf-login">${vField("sv-login", L("نام کاربری پنل", "Provider username"), "", 'autocomplete="off" dir="ltr"')}</div><div data-pf="pf-login">${vField("sv-password", L("رمز پنل", "Provider password"), "", 'type="password" autocomplete="new-password" dir="ltr"')}</div><div data-pf="pf-token">${vField("sv-api-token", L("توکن / API Key", "Token / API key"), "", 'type="password" autocomplete="new-password" dir="ltr"')}</div><div data-pf="pf-cf">${vField("sv-cf-id", "CF Access Client ID", "", 'dir="ltr"')}</div><div data-pf="pf-cf">${vField("sv-cf-secret", "CF Access Client Secret", "", 'type="password" dir="ltr"')}</div></div><div class="grid sm:grid-cols-2 gap-4"><div data-pf="pf-inbound">${vField("sv-inbound", L("شناسه inbound (x-ui)", "Inbound ID (x-ui)"), p.options.inboundId || 1, 'type="number" min="1"')}</div><div data-pf="pf-ids">${vField("sv-serviceids", L("Service / Group IDs (با کاما)", "Service / Group IDs (comma-separated)"), (p.options.serviceIds || []).join(","), 'dir="ltr"')}</div><div data-pf="pf-squads">${vField("sv-squads", L("Squad UUIDها (با کاما)", "Squad UUIDs (comma-separated)"), (p.options.squadIds || []).join(","), 'dir="ltr"')}${vField("sv-hwid", L("سقف دستگاه HWID؛ صفر نامحدود", "HWID device limit; 0 unlimited"), p.options.hwidDeviceLimit || 0, 'type="number" min="0" max="1000"')}</div><div data-pf="pf-rebecca">${vField("sv-rebecca-service", "Rebecca Service ID", p.options.serviceId || "", 'type="number" min="1"')}${vField("sv-ip-limit", L("سقف IP؛ صفر نامحدود", "IP limit; 0 unlimited"), p.options.ipLimit || 0, 'type="number" min="0" max="1000"')}</div><div data-pf="pf-interface">${vField("sv-interface", L("Interface وایرگارد", "WireGuard interface"), p.options.interface || "wg0", 'dir="ltr"')}</div><div data-pf="pf-subbase">${vField("sv-subbase", L("پایه لینک اشتراک؛ در صورت نیاز", "Subscription base URL, if required"), p.options.subscriptionBase, 'dir="ltr"')}</div></div></div><div data-pf="pf-shelf"><div class="grid sm:grid-cols-2 gap-4">${vSelect("sv-shelf", L("قفسه پیش‌فرض انبار", "Default stock shelf"), [["", L("انتخاب قفسه", "Select shelf")], ...shelves.map((s) => [s.id, s.title])], p.options.shelfId || "")}</div></div><div data-pf="pf-profile"><div class="grid sm:grid-cols-2 gap-4">${vField("sv-profile", L("گروه IBSng / Profile میکروتیک", "IBSng group / MikroTik profile"), p.options.profile, 'dir="ltr"')}</div></div><div data-pf="pf-api"><details class="v-media-details"> <summary>${L("تنظیمات پیشرفته پروتکل‌ها و inboundها", "Advanced protocol & inbound settings")}</summary><div class="pt-4">${vArea("sv-options", "JSON", JSON.stringify(p.options || {}, null, 2), 5, 'dir="ltr"')}</div></details></div>${vCheck("sv-enabled", L("فروش روی این پنل فعال باشد", "Enable sales on this provider"), p.enabled)}${vCheck("sv-emergency", L("هدایت فروش جدید به پنل جایگزین", "Route new purchases to an emergency provider"), p.emergency)}${vSelect("sv-fallback", L("پنل جایگزین", "Fallback provider"), [["", L("بدون جایگزین", "No fallback")], ...(SV.cache.panels || []).filter((x) => x.id !== p.id).map((x) => [x.id, x.title])], p.fallbackPanelId || "")}`,
     "svSavePanel",
   );
   svPfSync();
@@ -484,6 +496,15 @@ ACTIONS.svSavePanel = async () => {
     shelfId: vVal("sv-shelf"),
     profile: vVal("sv-profile"),
   };
+  if (vVal("sv-provider") === "remnawave") {
+    options.squadIds = vList(vVal("sv-squads"));
+    options.hwidDeviceLimit = vNum("sv-hwid");
+  }
+  if (vVal("sv-provider") === "rebecca") {
+    if (vVal("sv-rebecca-service")) options.serviceId = vNum("sv-rebecca-service");
+    else delete options.serviceId;
+    options.ipLimit = vNum("sv-ip-limit");
+  }
   if (options.serviceIds.some((n) => !Number.isInteger(n) || n < 1))
     throw new Error(
       L(
@@ -1055,7 +1076,7 @@ ACTIONS.svGatewayEdit = (d) => {
   SV.edit = { id: g.id || "" };
   vModal(
     L("روش پرداخت", "Payment method"),
-    `${vField("sg-title", L("عنوان نمایشی", "Display title"), g.title, "required")}${vSelect("sg-type", L("نوع درگاه", "Gateway type"), Object.entries(SV.meta.gateways), g.type)}${vCheck("sg-enabled", L("فعال باشد", "Enabled"), g.enabled)}<div class="grid sm:grid-cols-2 gap-4">${vField("sg-cashback", L("کش‌بک درصدی", "Cashback (%)"), g.cashback, 'type="number" min="0" max="100"')}<div data-pf="gw-merchant">${vField("sg-merchant", L("مرچنت؛ خالی حفظ قبلی", "Merchant ID; blank keeps existing"), "", 'type="password" autocomplete="new-password" dir="ltr"')}</div><div data-pf="gw-apikey">${vField("sg-api", L("API Key؛ خالی حفظ قبلی", "API key; blank keeps existing"), "", 'type="password" autocomplete="new-password" dir="ltr"')}</div><div data-pf="gw-ipn">${vField("sg-ipn", "NOWPayments IPN Secret", "", 'type="password" autocomplete="new-password" dir="ltr"')}</div></div><div data-pf="gw-sandbox">${vCheck("sg-sandbox", L("زرین‌پال آزمایشی؛ در محیط واقعی خاموش باشد", "Zarinpal sandbox; disable for production"), g.sandbox)}</div><div data-pf="gw-card"><div class="v-divider"></div><h4 class="text-sm font-bold">${L("کارت‌به‌کارت", "Bank transfer")}</h4><div class="grid sm:grid-cols-2 gap-4">${vField("sg-card", L("شماره کارت", "Card number"), g.cardNumber, 'dir="ltr" inputmode="numeric"')}${vField("sg-holder", L("صاحب کارت", "Card holder"), g.cardHolder)}</div></div><div data-pf="gw-crypto-block"><div class="v-divider"></div><h4 class="text-sm font-bold">${L("رمزارز مستقیم / Factor API", "Direct cryptocurrency / Factor API")}</h4><div class="grid sm:grid-cols-2 gap-4"><div data-pf="gw-currency">${vSelect(
+    `${vField("sg-title", L("عنوان نمایشی", "Display title"), g.title, "required")}${vSelect("sg-type", L("نوع درگاه", "Gateway type"), Object.entries(SV.meta.gateways), g.type)}${vCheck("sg-enabled", L("فعال باشد", "Enabled"), g.enabled)}<div class="grid sm:grid-cols-2 gap-4">${vField("sg-cashback", L("کش‌بک درصدی", "Cashback (%)"), g.cashback, 'type="number" min="0" max="100"')}<div data-pf="gw-merchant">${vField("sg-merchant", L("مرچنت؛ خالی حفظ قبلی", "Merchant ID; blank keeps existing"), "", 'type="password" autocomplete="new-password" dir="ltr"')}</div><div data-pf="gw-apikey">${vField("sg-api", L("API Key؛ خالی حفظ قبلی", "API key; blank keeps existing"), "", 'type="password" autocomplete="new-password" dir="ltr"')}</div><div data-pf="gw-ipn">${vField("sg-ipn", "IPN Signing Secret (NOWPayments / Tronado)", "", 'type="password" autocomplete="new-password" dir="ltr"')}</div></div><div data-pf="gw-fee"><div class="grid sm:grid-cols-2 gap-4">${vField("sg-fee-percent", L("کارمزد افزوده به فاکتور (%)", "Invoice surcharge (%)"), g.feePercent || 0, 'type="number" min="0" max="100"')}${vField("sg-fee-toman", L("کارمزد ثابت افزوده (تومان)", "Fixed invoice surcharge (toman)"), g.feeToman || 0, 'type="number" min="0"')}</div>${vNote(L("کارمزد فقط مبلغ فاکتور را افزایش می‌دهد؛ اعتبار کیف پول همان مبلغ درخواستی است.", "Surcharges increase the invoice, not the wallet credit."))}</div><div data-pf="gw-wage">${vField("sg-wage", L("درصد کارمزد پرداختی کسب‌وکار", "Business share of gateway fee (%)"), g.wagePercent || 0, 'type="number" min="0" max="100"')}</div><div data-pf="gw-sandbox">${vCheck("sg-sandbox", L("زرین‌پال آزمایشی؛ در محیط واقعی خاموش باشد", "Zarinpal sandbox; disable for production"), g.sandbox)}</div><div data-pf="gw-card"><div class="v-divider"></div><h4 class="text-sm font-bold">${L("کارت‌به‌کارت", "Bank transfer")}</h4><div class="grid sm:grid-cols-2 gap-4">${vField("sg-card", L("شماره کارت", "Card number"), g.cardNumber, 'dir="ltr" inputmode="numeric"')}${vField("sg-holder", L("صاحب کارت", "Card holder"), g.cardHolder)}</div></div><div data-pf="gw-crypto-block"><div class="v-divider"></div><h4 class="text-sm font-bold">${L("رمزارز مستقیم / Factor API", "Direct cryptocurrency / Factor API")}</h4><div class="grid sm:grid-cols-2 gap-4"><div data-pf="gw-currency">${vSelect(
       "sg-currency",
       L("ارز / شبکه", "Currency / network"),
       [
@@ -1078,6 +1099,9 @@ ACTIONS.svGatewaySave = async () => {
       type: vVal("sg-type"),
       enabled: vOn("sg-enabled"),
       cashback: vNum("sg-cashback"),
+      feePercent: vNum("sg-fee-percent"),
+      feeToman: vNum("sg-fee-toman"),
+      wagePercent: vNum("sg-wage"),
       currency: vVal("sg-currency"),
       address: vVal("sg-address"),
       coinToman: vNum("sg-rate"),

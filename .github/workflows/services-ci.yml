@@ -1,0 +1,36 @@
+name: Cloudflare VPN regression checks
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'styles/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'package*.json'
+      - 'wrangler.toml'
+      - '.github/workflows/services-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run smoke
+      - run: npm run build
+      # No Cloudflare account/token is needed; this does not deploy the Worker.
+      - run: npx wrangler deploy --dry-run --outdir /tmp/worker-dry-run
