@@ -256,6 +256,24 @@ test('tracker quotes alone are enough to keep the table plausible offline', asyn
   assert.match(rates.source, /alanchand/);
 });
 
+test('a tracker page refused by the Worker is read through the relay', async () => {
+  const env = marketEnv();
+  const seen = [];
+  tg.setOverride((u) => {
+    seen.push(u);
+    // The relay answers with its own short preamble around the page body.
+    if (u.startsWith('https://r.jina.ai/') && u.includes('alanchand.com'))
+      return new Response(`Title: alanchand\n\nURL Source: https://alanchand.com/\n\nMarkdown Content:\n${alanchandHtml}`);
+    throw new Error('offline');
+  });
+  const rates = await getLiveRates(env);
+  assert.ok(seen.some(u => u.startsWith('https://r.jina.ai/') && u.includes('alanchand.com')), 'the page is retried through the relay');
+  assert.equal(rates.stale, false, 'a relayed page still counts as a live source');
+  assert.equal(rates.fiat.usd.price, 232700, 'the relayed body goes through the same parser');
+  assert.equal(rates.gold.gold18.price, 23373660);
+  assert.equal(rates.diagnostics.find(d => d.name === 'alanchand').via, 'jina');
+});
+
 /* ============ Feed resilience ============
  * The Iranian hosts are the ones a Worker is most likely to be cut off from, so
  * the table must stay current through the global key-less feeds and through the

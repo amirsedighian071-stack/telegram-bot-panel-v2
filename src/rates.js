@@ -724,6 +724,40 @@ async function fetchHtml(url, max = 900 * 1024, { timeoutMs = 6000 } = {}) {
   return res.text;
 }
 
+/* Same transport rule as the JSON feeds, for the reference pages: direct first,
+ * then a relay when the host is one a Worker egress is likely to be refused by.
+ * The relayed body is handed to the same parser as the direct one — every quote
+ * still has to pass the unit and range checks before it can enter the table, so
+ * a relayed page can never be trusted more than a fetched one. */
+async function fetchHtmlSource(url, max = 900 * 1024, { entry, timeoutMs = 6000, relay = relayable(url) } = {}) {
+  const direct = await fetchHtml(url, max, { timeoutMs }).then(
+    (html) => ({ html }),
+    (error) => ({ error }),
+  );
+  if (direct.html !== undefined) return direct.html;
+  if (!relay) throw direct.error;
+
+  let relayError = null;
+  for (const spec of RATE_RELAYS) {
+    try {
+      const res = await fetchLimited(spec.url(url), {
+        redirect: 'follow',
+        headers: {
+          accept: 'text/html, text/plain, */*',
+          'accept-language': 'fa-IR,fa;q=0.9,en;q=0.8',
+          'user-agent': BROWSER_UA,
+          // Ask the relay for the page itself rather than its own summary.
+          'x-return-format': 'html',
+        },
+      }, max, timeoutMs);
+      if (!res.ok) throw new Error('http_' + res.status);
+      if (entry) entry.via = spec.name;
+      return res.text || '';
+    } catch (e) { relayError = e; }
+  }
+  throw new Error(`${str(direct.error?.message || direct.error, 60)} relay: ${str(relayError?.message || relayError, 50)}`);
+}
+
 // Hard wall-clock budget per source. Without it a host that accepts the
 // connection and then goes quiet would hold the whole refresh (and the Telegram
 // update that asked for it) for as long as the Worker is allowed to run.
@@ -893,10 +927,16 @@ export async function getLiveRates(env, options = {}) {
       diagnostics.push(entry);
       return { name, cfg, entry, started: Date.now(), html: '' };
     });
-    await Promise.all(sites.map(async (site) => {
-      try { site.html = await fetchHtml(site.cfg.url); } catch (e) { site.entry.error = str(e?.message || String(e), 120); }
+    await withDeadline(Promise.all(sites.map(async (site) => {
+      try { site.html = await fetchHtmlSource(site.cfg.url, undefined, { entry: site.entry, timeoutMs: 5000 }); } catch (e) { site.entry.error = str(e?.message || String(e), 120); }
       site.entry.ms = Date.now() - site.started;
-    }));
+    })), 11000, () => {
+      // The pages are heavy and are the last fallback, so the pass as a whole is
+      // bounded: a site that is still silent at the deadline is reported as such
+      // instead of holding the refresh (and the Telegram update behind it).
+      for (const site of sites)
+        if (!site.html && !site.entry.ms) { site.entry.ms = Date.now() - site.started; site.entry.error = site.entry.error || 'timeout'; }
+    }).catch(() => {});
     for (const site of sites) {
       if (!site.html) { hitsByName.set(site.name, 0); continue; }
       const hits = applySiteQuotes(rates, parseIranSiteHtml(site.html, site.name));
