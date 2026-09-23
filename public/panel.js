@@ -31,6 +31,7 @@
       chHint: 'ربات باید ادمین کانال باشد تا عضویت را تشخیص دهد.',
       signIn: 'ورود', signingIn: 'در حال ورود…', loginErr: 'رمز عبور نادرست است',
       rateLimited: 'تلاش‌های زیاد؛ چند دقیقه بعد دوباره امتحان کنید', fillPassword: 'رمز عبور را وارد کنید',
+      freeTierLimit: 'سهمیهٔ روزانهٔ پلن رایگان Cloudflare تمام شده است؛ پنل و ربات ساعت ۰۰:۰۰ UTC (۰۳:۳۰ تهران) خودبه‌خود برمی‌گردند.',
       defPwHint: 'رمز ورود اولیه: <b>botpanel123</b> — بدون نیاز به متغیر؛ در اولین ورود، رمز خصوصی خود را داخل پنل تعیین کنید.',
       security: 'امنیت و رمز عبور', currentPw: 'رمز فعلی', newPw: 'رمز جدید', newPw2: 'تکرار رمز جدید',
       changePw: 'تغییر رمز عبور', pwChanged: 'رمز عبور تغییر کرد', pwMinLen: 'رمز جدید باید حداقل ۶ کاراکتر باشد',
@@ -130,6 +131,7 @@
       chHint: 'The bot must be an admin of the channel to detect membership.',
       signIn: 'Sign in', signingIn: 'Signing in…', loginErr: 'Incorrect password',
       rateLimited: 'Too many attempts; try again in a few minutes', fillPassword: 'Please enter the password',
+      freeTierLimit: 'Cloudflare\'s free-plan daily allowance is used up; the panel and the bot come back by themselves at 00:00 UTC.',
       defPwHint: 'Initial password: <b>botpanel123</b> — no environment variable required. Set your private password on first login.',
       security: 'Security & password', currentPw: 'Current password', newPw: 'New password', newPw2: 'Repeat new password',
       changePw: 'Change password', pwChanged: 'Password changed', pwMinLen: 'New password must be at least 6 characters',
@@ -378,6 +380,7 @@
       throw new Error(t('relogin'));
     }
     if (d.error === 'password_change_required') { S.mustChangePassword = true; render(); }
+    if (d.error === 'cloudflare_free_tier_limit') throw new Error(t('freeTierLimit'));
     if (!res.ok || d.ok === false) throw new Error(d.error || ('HTTP ' + res.status));
     return d.data;
   }
@@ -563,7 +566,7 @@
       await initV2();
       render();
     } catch (e) {
-      err.textContent = e.message === 'invalid_credentials' ? t('loginErr') : e.message === 'rate_limited' ? t('rateLimited') : e.message === 'admin_password_secret_required' ? (S.lang === 'fa' ? 'نسخه سرور قدیمی است؛ نسخه جدید ورود اولیه بدون متغیر را پشتیبانی می‌کند.' : 'The server is outdated; the new version supports initial login without environment variables.') : e.message;
+      err.textContent = e.message === 'invalid_credentials' ? t('loginErr') : e.message === 'rate_limited' ? t('rateLimited') : e.message === 'cloudflare_free_tier_limit' ? t('freeTierLimit') : e.message === 'admin_password_secret_required' ? (S.lang === 'fa' ? 'نسخه سرور قدیمی است؛ نسخه جدید ورود اولیه بدون متغیر را پشتیبانی می‌کند.' : 'The server is outdated; the new version supports initial login without environment variables.') : e.message;
       err.classList.remove('hidden');
       btn.disabled = false;
       btn.innerHTML = '<i data-lucide="log-in" class="w-4 h-4"></i>' + t('signIn');
