@@ -2,7 +2,7 @@
 
 <img src="assets/readme/botpanel-logo.svg" alt="BotPanel" width="120">
 
-# Telegram Bot Admin Panel — v3.4
+# Telegram Bot Admin Panel — v3.5
 
 **A bilingual admin panel for Telegram bots, shops, VPN/service businesses and a customer Mini App — running on Cloudflare Workers**
 
@@ -82,6 +82,18 @@ Key files: `src/index.js` (routes), `src/telegram.js` (bot logic), `src/services
 </details>
 
 <details open>
+<summary><b>▸ What's new in v3.5</b></summary>
+
+- **Live Iran market rates:** the rates section now merges several live sources (gold/coins, free-market fiat, Tether & crypto) with a one-minute cache and automatic Rial/Toman normalization. When the market is unreachable, the last good rates are served with a *stale* warning. A live table renders inside the panel (**Settings → Rates section**) and is also exposed at `GET /api/rates/live`.
+- **PasarGuard panel type in Services/VPN:** a new `PasarGuard` provider next to Marzban/Marzneshin, speaking the standard Marz-family REST API with service-group (`group_ids`) support.
+- **Webhook reminder:** after saving the bot token and numeric admin ID, the panel shows a banner + modal reminding you to press **Set webhook** in **Settings → Webhook management** — without it, Telegram delivers nothing and the bot stays silent.
+- **Brand icons instead of emojis:** every emoji in the admin panel and customer mini-app is replaced with brand icons (Lucide on web, bundled inline SVG in the mini-app).
+- **Fully responsive:** the admin panel and mini-app work from phones to desktops with no horizontal scrolling; modals open as bottom sheets on small phones.
+- **Accordions collapsed by default:** every collapsible section stays closed until clicked.
+
+</details>
+
+<details>
 <summary><b>▸ What's new in v3.4</b></summary>
 
 - **Nation-wide news publisher (Iran + world):** one 📰 button after `/start`, then a choice between **Iran news** and **world news**; each opens its own categories (breaking, politics, economy, sports, tech). World headlines are **automatically translated to Persian** (30-day cache). Schedule delivery to channels/groups by a **fixed daily time** (Tehran) or a repeating interval.
@@ -634,6 +646,7 @@ The lock can be scoped to a single area (shop, service, groups) instead of the w
 
 - **Set webhook:** registers the current Worker URL with the secret and required update types.
 - **Delete webhook:** disconnects Telegram from this Worker (useful when moving the bot).
+- ⚠️ **Important:** until you press “Set webhook”, Telegram delivers nothing and the bot stays completely silent. After saving the token and numeric admin ID, the panel reminds you with a banner and a popup.
 - The status box shows the last error and the pending update count — start troubleshooting here.
 
 </details>
@@ -679,7 +692,9 @@ This module sells services (VPN, subscriptions, accounts) and has 13 tabs. To st
 <details>
 <summary><b>▸ Providers</b></summary>
 
-1. Press **Add provider** and pick the type: Marzban, Marzneshin, manual stock, and so on.
+1. Press **Add provider** and pick the type: Marzban, Marzneshin, **PasarGuard**, manual stock, and so on.
+
+**PasarGuard:** choose the `PasarGuard` type and enter the panel URL plus admin username/password (standard Marz-family REST API with service groups). If a plan selects a service group, the user is created inside that group.
 2. Enter the URL, username and password. Credentials are encrypted with `VAULT_KEY` and are never returned by the API.
 3. Press **Test connection**; on success the provider version is displayed.
 4. **Enable** the provider so it can be selected in plans.

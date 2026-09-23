@@ -1,3 +1,19 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Admin panel: small-screen hardening (rebuild with `npm run build`). */
+@layer components {
+  /* Bottom-sheet modals on narrow phones for thumb-friendly reach. */
+  @media (max-width: 480px) {
+    #modal-wrap {
+      padding: 0;
+      align-items: flex-end;
+    }
+    #modal-box {
+      border-radius: 18px 18px 0 0;
+      max-height: 92vh;
+      max-width: 100%;
+    }
+  }
+}

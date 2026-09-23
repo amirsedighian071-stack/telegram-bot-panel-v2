@@ -55,6 +55,11 @@ export const PROVIDERS = {
     capabilities: [...standard, "revoke", "nodes", "inbounds", "first_use"],
     hint: "REST /api/users و service_ids",
   },
+  pasarguard: {
+    label: "PasarGuard",
+    capabilities: [...standard, "revoke", "nodes", "inbounds", "first_use"],
+    hint: "REST /api/user با proxy_settings و group_ids؛ تاریخ ISO",
+  },
   xui: {
     label: "3x-ui / x-ui",
     capabilities: [...standard, "revoke", "inbounds", "first_use"],
@@ -106,6 +111,10 @@ export const PROVIDERS = {
     hint: "RouterOS REST با HTTPS؛ حجم/زمان توسط profile سمت سرور",
   },
 };
+// PasarGuard speaks the same FastAPI dialect as the Marzban family
+// (POST /api/admin/token, /api/user, /api/system, /api/nodes) but its create
+// payload follows the newer shape: proxy_settings + group_ids + ISO expire.
+const isMarzLike = (t) => t === "pasarguard" || (typeof t === "string" && t.startsWith("marz"));
 export const publicPanel = (panel) => {
   const { credentials, ...p } = panel;
   return {
@@ -251,7 +260,7 @@ class Connector {
     let cached = await get(this.env, "login", this.panel.id);
     if (!fresh && cached?.expiresAt > Date.now())
       return unseal(this.env, cached.credentials);
-    const marz = this.type.startsWith("marz"),
+    const marz = isMarzLike(this.type),
       path =
         this.type === "ibsng"
           ? "/IBSng/admin/"
@@ -306,7 +315,8 @@ class Connector {
     if (
       this.type === "marzban" ||
       this.type === "marzban_v1" ||
-      this.type === "marzneshin"
+      this.type === "marzneshin" ||
+      this.type === "pasarguard"
     )
       return this.secret.token
         ? { authorization: "Bearer " + this.secret.token }
@@ -373,6 +383,7 @@ class Connector {
       : "/panel/api/inbounds";
   }
   async resources() {
+    if (this.type === "pasarguard") return this.call("/api/groups");
     if (this.type.startsWith("marz"))
       return this.call(
         this.type === "marzneshin"
@@ -413,7 +424,11 @@ class Connector {
     if (this.type === "stock") return { ok: true, kind: "local_inventory" };
     const start = Date.now();
     let data;
-    if (this.type === "marzban" || this.type === "marzban_v1")
+    if (
+      this.type === "marzban" ||
+      this.type === "marzban_v1" ||
+      this.type === "pasarguard"
+    )
       data = await this.call("/api/system");
     else if (this.type === "marzneshin")
       data = await this.call("/api/system/stats/users");
@@ -434,12 +449,16 @@ class Connector {
   }
   async reconnectNode(nodeId) {
     this.supported("nodes");
+    // PasarGuard only exposes a global reconnect (POST /api/nodes/reconnect),
+    // so a per-node request restarts every node instead of failing.
+    if (this.type === "pasarguard")
+      return this.call("/api/nodes/reconnect", "POST", {});
     assert(/^[0-9]+$/.test(String(nodeId)), "invalid_node_id");
     return this.call("/api/node/" + nodeId + "/reconnect", "POST", {});
   }
   async get(account) {
     const username = encodeURIComponent(account.username);
-    if (this.type.startsWith("marz")) {
+    if (isMarzLike(this.type)) {
       const raw = await this.call(
         (this.type === "marzneshin" ? "/api/users/" : "/api/user/") + username,
         "GET",
@@ -785,7 +804,7 @@ class Connector {
         }),
       });
     }
-    if (this.type.startsWith("marz")) {
+    if (isMarzLike(this.type)) {
       const data = {
         username: a.username,
         data_limit: a.dataLimit,
@@ -810,19 +829,25 @@ class Connector {
               : { expire_strategy: "never" },
         );
       } else {
-        data[this.type === "marzban_v1" ? "proxy_settings" : "proxies"] = a
-          .options.proxies ||
+        // PasarGuard follows the newer payload shape (proxy_settings +
+        // group_ids + ISO expire), exactly like Marzban 1.x.
+        const v1 =
+          this.type === "marzban_v1" || this.type === "pasarguard";
+        data[v1 ? "proxy_settings" : "proxies"] = a.options.proxies ||
           this.options.proxies || { vless: {} };
-        const inbounds = a.options.inbounds || this.options.inbounds;
-        if (inbounds)
-          data[this.type === "marzban_v1" ? "group_ids" : "inbounds"] =
-            inbounds;
-        data.expire =
-          this.type === "marzban_v1"
-            ? a.expiresAt
-              ? new Date(a.expiresAt * 1000).toISOString()
-              : null
-            : a.expiresAt;
+        const inbounds =
+          a.options.groupIds ||
+          a.options.serviceIds ||
+          a.options.inbounds ||
+          this.options.groupIds ||
+          this.options.serviceIds ||
+          this.options.inbounds;
+        if (inbounds) data[v1 ? "group_ids" : "inbounds"] = inbounds;
+        data.expire = v1
+          ? a.expiresAt
+            ? new Date(a.expiresAt * 1000).toISOString()
+            : null
+          : a.expiresAt;
         if (a.firstUse) {
           data.status = "on_hold";
           data.expire = null;
@@ -1023,7 +1048,7 @@ class Connector {
   }
   async update(a, desired) {
     this.supported("renew");
-    if (this.type.startsWith("marz")) {
+    if (isMarzLike(this.type)) {
       const body = { data_limit: desired.dataLimit };
       if (this.type === "marzneshin") {
         body.expire_strategy = desired.expiresAt ? "fixed_date" : "never";
@@ -1032,7 +1057,7 @@ class Connector {
           : null;
       } else
         body.expire =
-          this.type === "marzban_v1"
+          this.type === "marzban_v1" || this.type === "pasarguard"
             ? desired.expiresAt
               ? new Date(desired.expiresAt * 1000).toISOString()
               : null
@@ -1231,7 +1256,7 @@ class Connector {
         "POST",
         {},
       );
-    if (this.type.startsWith("marz"))
+    if (isMarzLike(this.type))
       return this.call("/api/user/" + encodeURIComponent(a.username), "PUT", {
         status: enabled ? "active" : "disabled",
       });
@@ -1287,7 +1312,7 @@ class Connector {
       return this.call("/api/subscriptions", "DELETE", {
         usernames: [a.username],
       });
-    if (this.type.startsWith("marz"))
+    if (isMarzLike(this.type))
       return this.call(
         (this.type === "marzneshin" ? "/api/users/" : "/api/user/") +
           encodeURIComponent(a.username),
@@ -1364,7 +1389,7 @@ class Connector {
       return this.call("/api/subscriptions/reset", "POST", {
         usernames: [a.username],
       });
-    if (this.type.startsWith("marz"))
+    if (isMarzLike(this.type))
       return this.call(
         (this.type === "marzneshin" ? "/api/users/" : "/api/user/") +
           encodeURIComponent(a.username) +
@@ -1425,7 +1450,7 @@ class Connector {
       return this.call("/api/subscriptions/revoke", "POST", {
         usernames: [a.username],
       });
-    if (this.type.startsWith("marz"))
+    if (isMarzLike(this.type))
       return this.call(
         (this.type === "marzneshin" ? "/api/users/" : "/api/user/") +
           encodeURIComponent(a.username) +
@@ -1478,6 +1503,9 @@ export function prepareAccount(
     /^[a-zA-Z][a-zA-Z0-9_\-]{2,59}$/.test(username),
     "invalid_service_name",
   );
+  // PasarGuard usernames: 3–32 chars, lowercase latin, digits, underscore.
+  if (panel.type === "pasarguard")
+    assert(/^[a-z][a-z0-9_]{2,31}$/.test(username), "invalid_service_name");
   const a = {
     username,
     uuid: crypto.randomUUID(),

@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { requireAuth } from '../auth.js';
 import { getSettings, saveSettings, getJson } from '../kv.js';
 import { patchV2Settings, enabled, assert } from '../config.js';
-import { RATES_SEND_CATS, RATES_CATEGORIES, liveRatesDigestText, sendRatesNow, ratesDestinations } from '../rates.js';
+import { RATES_SEND_CATS, RATES_CATEGORIES, liveRatesDigestText, sendRatesNow, ratesDestinations, getLiveRates, IRAN_MARKET_SOURCES } from '../rates.js';
 import { readJson } from '../body.js';
 
 const r = new Hono();
@@ -36,6 +36,22 @@ r.put('/settings', async (c) => {
 r.get('/preview', async (c) => {
   const category = RATES_SEND_CATS.includes(c.req.query('category')) ? c.req.query('category') : 'all';
   return result(c, { category, text: await liveRatesDigestText(c.env, category) });
+});
+
+// Structured live table so the panel can show the same Iran-market numbers
+// the bot publishes, together with their source and freshness.
+r.get('/live', async (c) => {
+  const rates = await getLiveRates(c.env);
+  return result(c, {
+    updatedAt: rates.updatedAt,
+    source: rates.source,
+    stale: !!rates.stale,
+    offline: !!rates.offline,
+    sources: IRAN_MARKET_SOURCES,
+    gold: rates.gold,
+    fiat: rates.fiat,
+    crypto: rates.crypto,
+  });
 });
 
 r.post('/send', async (c) => {
