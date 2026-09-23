@@ -12,37 +12,43 @@ export const RATES_CATEGORIES = {
   crypto: { fa: '💎 رمزارزها و تتر', en: '💎 Crypto & Tether' },
 };
 
+/* Offline snapshot of the Iranian market, kept in Toman. It is only the starting
+ * point of the table: every refresh replaces these numbers with live quotes from
+ * TGJU / Bonbast / Nobitex and, when those are unreachable, from the public
+ * Iranian trackers (moj3.ir, alanchand.com, isignal.ir). Keeping it current means
+ * a cold start (or a fully blocked network) still shows realistic Iranian prices
+ * instead of obviously wrong ones. Values below match the 1405/07/01 session. */
 export const GOLD_DATA = {
-  gold18: { fa: 'طلای ۱۸ عیار', en: '18K Gold (per gram)', unit: 'گرم', price: 4350000, change: 1.25, high: 4380000, low: 4320000 },
-  gold24: { fa: 'طلای ۲۴ عیار', en: '24K Gold (per gram)', unit: 'گرم', price: 5800000, change: 1.25, high: 5840000, low: 5760000 },
-  mesghal: { fa: 'مثقال طلا', en: 'Mithqal Gold', unit: 'مثقال', price: 18840000, change: 1.20, high: 18950000, low: 18700000 },
-  emami: { fa: 'سکه تمام بهار (امامی)', en: 'Emami Full Gold Coin', unit: 'عدد', price: 51200000, change: 0.85, high: 51500000, low: 50800000 },
-  bahar: { fa: 'سکه بهار آزادی (طرح قدیم)', en: 'Bahar Azadi Coin', unit: 'عدد', price: 47800000, change: 0.75, high: 48100000, low: 47500000 },
-  nim: { fa: 'نیم سکه بهار آزادی', en: 'Half Gold Coin', unit: 'عدد', price: 27600000, change: 0.90, high: 27800000, low: 27400000 },
-  rob: { fa: 'ربع سکه بهار آزادی', en: 'Quarter Gold Coin', unit: 'عدد', price: 17700000, change: 1.10, high: 17900000, low: 17500000 },
-  gerami: { fa: 'سکه گرمی', en: '1g Gold Coin', unit: 'عدد', price: 8200000, change: 0.50, high: 8300000, low: 81500000 },
-  ounce: { fa: 'انس جهانی طلا', en: 'Global Gold Ounce', unit: 'USD', price: 2735.40, isUsd: true, change: -0.35, high: 2748.20, low: 2728.10 },
+  gold18: { fa: 'طلای ۱۸ عیار', en: '18K Gold (per gram)', unit: 'گرم', price: 23450000, change: 0.98, high: 23590000, low: 23310000 },
+  gold24: { fa: 'طلای ۲۴ عیار', en: '24K Gold (per gram)', unit: 'گرم', price: 31918000, change: 0.98, high: 32110000, low: 31730000 },
+  mesghal: { fa: 'مثقال طلا (آبشده)', en: 'Mithqal Gold (melted)', unit: 'مثقال', price: 101250000, change: 0.78, high: 101900000, low: 100600000 },
+  emami: { fa: 'سکه تمام بهار (امامی)', en: 'Emami Full Gold Coin', unit: 'عدد', price: 234000000, change: 1.50, high: 235000000, low: 231000000 },
+  bahar: { fa: 'سکه بهار آزادی (طرح قدیم)', en: 'Bahar Azadi Coin', unit: 'عدد', price: 230000000, change: 1.37, high: 231000000, low: 227000000 },
+  nim: { fa: 'نیم سکه بهار آزادی', en: 'Half Gold Coin', unit: 'عدد', price: 119500000, change: 0.83, high: 120200000, low: 118500000 },
+  rob: { fa: 'ربع سکه بهار آزادی', en: 'Quarter Gold Coin', unit: 'عدد', price: 63500000, change: 0.00, high: 63900000, low: 63100000 },
+  gerami: { fa: 'سکه گرمی', en: '1g Gold Coin', unit: 'عدد', price: 33000000, change: 0.00, high: 33200000, low: 32800000 },
+  ounce: { fa: 'انس جهانی طلا', en: 'Global Gold Ounce', unit: 'USD', price: 4330.50, isUsd: true, change: -0.70, high: 4365.00, low: 4300.00 },
 };
 
 export const FIAT_DATA = {
-  usd: { fa: 'دلار آمریکا', en: 'US Dollar (USD)', code: 'USD', price: 68500, change: 0.45, high: 68900, low: 68200 },
-  eur: { fa: 'یورو اروپا', en: 'Euro (EUR)', code: 'EUR', price: 74200, change: 0.30, high: 74600, low: 73900 },
-  aed: { fa: 'درهم امارات', en: 'UAE Dirham (AED)', code: 'AED', price: 18680, change: 0.40, high: 18750, low: 18600 },
-  gbp: { fa: 'پوند انگلیس', en: 'British Pound (GBP)', code: 'GBP', price: 89100, change: 0.60, high: 89600, low: 88700 },
-  try: { fa: 'لیر ترکیه', en: 'Turkish Lira (TRY)', code: 'TRY', price: 1980, change: -0.20, high: 2010, low: 1970 },
-  iqd: { fa: 'صد دینار عراق', en: '100 Iraqi Dinar (IQD)', code: 'IQD', price: 5230, change: 0.15, high: 5260, low: 5200 },
-  cny: { fa: 'یوان چین', en: 'Chinese Yuan (CNY)', code: 'CNY', price: 9550, change: 0.25, high: 9600, low: 9510 },
-  cad: { fa: 'دلار کانادا', en: 'Canadian Dollar (CAD)', code: 'CAD', price: 49800, change: 0.35, high: 50100, low: 49500 },
+  usd: { fa: 'دلار آمریکا', en: 'US Dollar (USD)', code: 'USD', price: 233200, change: 1.04, high: 233900, low: 231800 },
+  eur: { fa: 'یورو اروپا', en: 'Euro (EUR)', code: 'EUR', price: 266890, change: 0.71, high: 267600, low: 265600 },
+  aed: { fa: 'درهم امارات', en: 'UAE Dirham (AED)', code: 'AED', price: 63522, change: 1.07, high: 63800, low: 63100 },
+  gbp: { fa: 'پوند انگلیس', en: 'British Pound (GBP)', code: 'GBP', price: 305000, change: 0.55, high: 306600, low: 302000 },
+  try: { fa: 'لیر ترکیه', en: 'Turkish Lira (TRY)', code: 'TRY', price: 4840, change: -0.20, high: 4900, low: 4800 },
+  iqd: { fa: 'صد دینار عراق', en: '100 Iraqi Dinar (IQD)', code: 'IQD', price: 14870, change: 0.15, high: 14950, low: 14800 },
+  cny: { fa: 'یوان چین', en: 'Chinese Yuan (CNY)', code: 'CNY', price: 34800, change: 0.25, high: 34950, low: 34600 },
+  cad: { fa: 'دلار کانادا', en: 'Canadian Dollar (CAD)', code: 'CAD', price: 165200, change: 0.35, high: 165900, low: 164400 },
 };
 
 export const CRYPTO_DATA = {
-  usdt: { fa: 'تتر (USDT)', en: 'Tether (USDT)', symbol: 'USDT', priceToman: 68550, priceUsd: 1.00, change: 0.05, high: 68800, low: 68300 },
-  btc: { fa: 'بیت‌کوین (BTC)', en: 'Bitcoin (BTC)', symbol: 'BTC', priceToman: 6150000000, priceUsd: 89800, change: 2.80, high: 91200, low: 87500 },
-  eth: { fa: 'اتریوم (ETH)', en: 'Ethereum (ETH)', symbol: 'ETH', priceToman: 232000000, priceUsd: 3380, change: 1.95, high: 3440, low: 3310 },
-  ton: { fa: 'تون‌کوین (TON)', en: 'Toncoin (TON)', symbol: 'TON', priceToman: 382000, priceUsd: 5.58, change: 3.40, high: 5.75, low: 5.40 },
-  trx: { fa: 'ترون (TRX)', en: 'TRON (TRX)', symbol: 'TRX', priceToman: 13500, priceUsd: 0.198, change: 0.85, high: 0.205, low: 0.194 },
-  sol: { fa: 'سولانا (SOL)', en: 'Solana (SOL)', symbol: 'SOL', priceToman: 14700000, priceUsd: 215, change: 4.10, high: 222, low: 206 },
-  not: { fa: 'نات‌کوین (NOT)', en: 'Notcoin (NOT)', symbol: 'NOT', priceToman: 540, priceUsd: 0.0078, change: -1.20, high: 0.0082, low: 0.0075 },
+  usdt: { fa: 'تتر (USDT)', en: 'Tether (USDT)', symbol: 'USDT', priceToman: 228000, priceUsd: 1.00, change: 0.20, high: 228600, low: 227300 },
+  btc: { fa: 'بیت‌کوین (BTC)', en: 'Bitcoin (BTC)', symbol: 'BTC', priceToman: 19745000000, priceUsd: 86430, change: 1.12, high: 19900000000, low: 19500000000 },
+  eth: { fa: 'اتریوم (ETH)', en: 'Ethereum (ETH)', symbol: 'ETH', priceToman: 630500000, priceUsd: 2756, change: 0.85, high: 634000000, low: 625000000 },
+  ton: { fa: 'تون‌کوین (TON)', en: 'Toncoin (TON)', symbol: 'TON', priceToman: 335600, priceUsd: 1.47, change: 2.22, high: 340000, low: 331000 },
+  trx: { fa: 'ترون (TRX)', en: 'TRON (TRX)', symbol: 'TRX', priceToman: 78650, priceUsd: 0.3442, change: -1.37, high: 79900, low: 77400 },
+  sol: { fa: 'سولانا (SOL)', en: 'Solana (SOL)', symbol: 'SOL', priceToman: 27135000, priceUsd: 118.78, change: 1.69, high: 27600000, low: 26750000 },
+  not: { fa: 'نات‌کوین (NOT)', en: 'Notcoin (NOT)', symbol: 'NOT', priceToman: 114, priceUsd: 0.0005, change: 0.80, high: 117, low: 111 },
 };
 
 const fmtMoney = (n, lang = 'fa') => Number(n).toLocaleString(lang === 'en' ? 'en-US' : 'fa-IR');
@@ -55,11 +61,154 @@ const trendIcon = ch => ch > 0 ? '🟢 📈 +' : ch < 0 ? '🔴 📉 ' : '⚪ ';
  * poison the table. When every source fails, the last good snapshot is served
  * (marked stale) instead of silently showing old static numbers. */
 export const IRAN_MARKET_SOURCES = {
-  tgju: ['https://call1.tgju.org/ajax.json', 'https://call2.tgju.org/ajax.json'],
+  tgju: ['https://call1.tgju.org/ajax.json', 'https://call2.tgju.org/ajax.json', 'https://call3.tgju.org/ajax.json', 'https://call4.tgju.org/ajax.json', 'https://www.tgju.org/ajax.json'],
   bonbast: 'https://bonbast.liara.run/json',
   nobitex: 'https://apiv2.nobitex.ir/market/stats?srcCurrency=usdt,btc,eth,trx,ton,sol&dstCurrency=rls',
   coingecko: 'https://api.coingecko.com/api/v3/simple/price?ids=tether,bitcoin,ethereum,tron,the-open-network,solana,notcoin&vs_currencies=usd&include_24hr_change=true&precision=4',
 };
+
+/* Public Iranian price trackers (the pages the panel owner checks by hand). They
+ * have no free JSON API, so their published Persian price tables are read from
+ * the served HTML and used to fill every quote the JSON feeds above missed —
+ * for example when TGJU blocks the Worker's egress. The declared unit of each
+ * site is applied before the value is range-checked, and a quote is accepted
+ * only when it lands inside a plausible Toman band, so a layout change can never
+ * push nonsense into the table. */
+export const IRAN_MARKET_HTML_SOURCES = {
+  alanchand: { url: 'https://alanchand.com/', unit: 'toman' },
+  moj3: { url: 'https://moj3.ir/price/', unit: 'toman' },
+  isignal: { url: 'https://isignal.ir/gold-currency/', unit: 'rial' },
+};
+
+// Persian labels used by those three sites, in the order they are tried. The
+// first label that appears in the page wins; from its position the largest
+// number that fits the asset's plausible band is taken as the quote.
+const SITE_LABELS = [
+  [[/طلای\s*۱۸ عیار/, /طلای\s*18 عیار/, /گرم طلای 18 عیار/], 'gold', 'gold18'],
+  [[/طلای\s*۲۴ عیار/, /طلای\s*24 عیار/], 'gold', 'gold24'],
+  [[/آبشده/, /مثقال طلا/], 'gold', 'mesghal'],
+  [[/سکه امامی/, /سکه طرح جدید/], 'gold', 'emami'],
+  [[/سکه بهار آزادی/, /سکه طرح قدیم/], 'gold', 'bahar'],
+  [[/نیم سکه/], 'gold', 'nim'],
+  [[/ربع سکه/], 'gold', 'rob'],
+  [[/سکه یک گرمی/, /سکه گرمی/, /سکه\s*1 گرمی/], 'gold', 'gerami'],
+  [[/انس جهانی طلا/, /انس طلا/], 'gold', 'ounce'],
+  [[/دلار آمریکا/, /دلار/], 'fiat', 'usd'],
+  [[/یورو/], 'fiat', 'eur'],
+  [[/درهم/], 'fiat', 'aed'],
+  [[/پوند انگلیس/, /پوند/], 'fiat', 'gbp'],
+  [[/لیر ترکیه/, /لیر/], 'fiat', 'try'],
+  [[/صد دینار عراق/, /دینار عراق/], 'fiat', 'iqd'],
+  [[/یوان چین/, /یوان/], 'fiat', 'cny'],
+  [[/دلار کانادا/], 'fiat', 'cad'],
+  [[/تتر/], 'crypto', 'usdt'],
+  [[/بیت\s*کوین/], 'crypto', 'btc'],
+  [[/اتریوم/], 'crypto', 'eth'],
+  [[/تون\s*کوین/], 'crypto', 'ton'],
+  [[/ترون/], 'crypto', 'trx'],
+  [[/سولانا/], 'crypto', 'sol'],
+  [[/نات\s*کوین/], 'crypto', 'not'],
+];
+
+const HTML_ENTITIES = { '&nbsp;': ' ', '&zwnj;': '\u200c', '&amp;': '&', '&quot;': '"', '&#39;': "'", '&laquo;': '«', '&raquo;': '»' };
+
+// Cell (one table cell / inline element) and record (one row or card) markers, so
+// a label can be tied to the numbers printed in its own row instead of the next
+// currency's row.
+const SITE_CELL = '\u0001';
+export const SITE_REC = '\u0002';
+const SITE_BLOCK_TAGS = 'tr|div|li|section|article|table|tbody|thead|ul|ol|dl|nav|main|header|footer';
+const SITE_CELL_TAGS = 'p|span|td|th|h1|h2|h3|h4|h5|h6|b|strong|em|i|a|small|label|time|dt|dd';
+
+// Flattens a price page to text while keeping row boundaries, dropping scripts,
+// styles and every other tag.
+export function htmlToText(html) {
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(new RegExp(`</?(?:${SITE_BLOCK_TAGS})\\s*/?>`, 'gi'), SITE_REC)
+    .replace(/<br\s*\/?>/gi, SITE_REC)
+    .replace(new RegExp(`</?(?:${SITE_CELL_TAGS})[^>]*>`, 'gi'), SITE_CELL)
+    .replace(/<[^>]*>/g, SITE_CELL)
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&[a-z#0-9]+;/gi, (e) => HTML_ENTITIES[e.toLowerCase()] ?? ' ')
+    .replace(/[ \t\r\n]+/g, ' ')
+    .trim();
+}
+
+const SITE_TOKEN_RE = /[0-9][0-9.,٬]*|[۰-۹][۰-۹.,٬]*|[٠-٩][٠-٩.,٬]*/g;
+
+/* Finds the quote a label points at. Every occurrence of the label is tried in
+ * order: a heading without numbers is skipped, and a quote is only accepted when
+ * it lands inside the asset's plausible band after applying the site's unit. */
+function siteQuoteFor(text, label, cat, key, unit) {
+  const [min, max] = RATE_RANGES[key] || [0, Infinity];
+  const normalize = (raw) => (key === 'ounce' ? raw : unit === 'rial' ? raw / 10 : raw);
+  label.lastIndex = 0;
+  let match, checked = 0;
+  while ((match = label.exec(text)) && checked < 12) {
+    checked++;
+    const record = text.slice(match.index + match[0].length, text.length).slice(0, 600).split(SITE_REC)[0];
+    const hits = [];
+    let firstCell = null;
+    for (const cell of record.split(SITE_CELL)) {
+      const cellHits = [];
+      for (const token of cell.match(SITE_TOKEN_RE) || []) {
+        const raw = parseMarketNumber(token);
+        if (!Number.isFinite(raw) || raw <= 0) continue;
+        const toman = normalize(raw);
+        if (toman < min || toman > max) continue;
+        cellHits.push({ raw, toman });
+      }
+      if (cellHits.length) {
+        hits.push(...cellHits);
+        if (!firstCell) firstCell = cellHits;
+      }
+    }
+    const pool = hits.length ? (cat === 'fiat' ? hits : firstCell) : null;
+    if (!pool) continue;
+    // Currencies publish a buy and a sell column (the free-market price is the
+    // sell one), so the largest plausible value of the row is the quote.
+    const pick = pool.reduce((a, b) => (b.toman > a.toman ? b : a));
+    return key === 'ounce' ? Math.round(pick.raw * 100) / 100 : Math.round(pick.toman);
+  }
+  return 0;
+}
+
+/* Reads the price table of one of the public Iranian trackers. Returns quotes in
+ * Toman keyed as `category.key`, ready for `applySiteQuotes`. */
+export function parseIranSiteHtml(html, source = 'alanchand') {
+  const unit = IRAN_MARKET_HTML_SOURCES[source]?.unit || 'toman';
+  const text = htmlToText(html);
+  const quotes = {};
+  for (const [regexes, cat, key] of SITE_LABELS) {
+    for (const re of regexes) {
+      // The global flag lets every occurrence of a label be tried in order, so a
+      // heading that mentions the asset without a price is skipped.
+      const value = siteQuoteFor(text, new RegExp(re.source, 'g'), cat, key, unit);
+      if (value) { quotes[`${cat}.${key}`] = value; break; }
+    }
+  }
+  return quotes;
+}
+
+// Applied after the JSON feeds, so it only fills the gaps they left behind.
+export function applySiteQuotes(rates, quotes) {
+  let hits = 0;
+  for (const [path, value] of Object.entries(quotes || {})) {
+    const [cat, key] = path.split('.');
+    if (cat === 'gold' && key === 'ounce') {
+      const item = rates.gold?.ounce;
+      if (!item || item._live) continue;
+      if (value >= RATE_RANGES.ounce[0] && value <= RATE_RANGES.ounce[1]) {
+        item.price = value; item._live = true; hits++;
+      }
+      continue;
+    }
+    if (applyQuote(rates, cat, key, value, {}, true, 'toman')) hits++;
+  }
+  return hits;
+}
 
 // Plausible [min, max] per key, in Toman (ounce in USD). Bands stay narrow on
 // purpose: Rial and Toman readings must never both fit the same band, so a
@@ -274,6 +423,20 @@ async function fetchJson(url, max = 512 * 1024) {
   return res.data ?? JSON.parse(res.text);
 }
 
+// Iranian trackers serve HTML to browsers; a browser-like identity is sent so a
+// default worker user agent is not rejected outright.
+async function fetchHtml(url, max = 600 * 1024) {
+  const res = await fetchLimited(url, {
+    headers: {
+      accept: 'text/html,application/xhtml+xml',
+      'accept-language': 'fa-IR,fa;q=0.9,en;q=0.8',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+    },
+  }, max);
+  if (!res.ok) throw new Error('bad_status_' + res.status);
+  return res.text;
+}
+
 export async function getLiveRates(env) {
   const cached = await getJson(env, 'v2:rates:cache');
   if (cached && Date.now() - (cached.at || 0) < 60000) return cached.data;
@@ -294,7 +457,7 @@ export async function getLiveRates(env) {
   const attempt = async (fn) => {
     try { return await fn(); } catch { return null; }
   };
-  const [tgju, bonbast, nobitex, swap, gecko] = await Promise.all([
+  const [tgju, bonbast, nobitex, swap, gecko, sites] = await Promise.all([
     attempt(async () => {
       for (const url of IRAN_MARKET_SOURCES.tgju) {
         try { return await fetchJson(url); } catch { /* try next mirror */ }
@@ -305,6 +468,9 @@ export async function getLiveRates(env) {
     attempt(() => fetchJson(IRAN_MARKET_SOURCES.nobitex)),
     attempt(() => fetchJson(MARKET_ENDPOINT, 256 * 1024)),
     attempt(() => fetchJson(IRAN_MARKET_SOURCES.coingecko, 256 * 1024)),
+    Promise.all(Object.entries(IRAN_MARKET_HTML_SOURCES).map(async ([name, cfg]) => {
+      try { return [name, await fetchHtml(cfg.url)]; } catch { return [name, '']; }
+    })),
   ]);
 
   const tgjuHits = tgju ? parseTgju(tgju, rates) : 0;
@@ -313,6 +479,17 @@ export async function getLiveRates(env) {
   const swapHits = swap ? parseSwapwallet(swap, rates) : 0;
   const liveUsdt = rates.crypto.usdt.priceToman;
   const geckoHits = gecko ? parseCoingecko(gecko, rates, liveUsdt) : 0;
+
+  // The public Iranian trackers fill whatever the JSON feeds above could not
+  // quote, so the table still mirrors moj3 / alanchand / isignal prices when
+  // TGJU is unreachable from the Worker.
+  const siteParts = [];
+  let siteHits = 0;
+  for (const [name, html] of sites || []) {
+    if (!html) continue;
+    const hits = applySiteQuotes(rates, parseIranSiteHtml(html, name));
+    if (hits) { siteHits += hits; siteParts.push(name); }
+  }
 
   // Anchor every coin's USD leg to the live Iranian USDT/Toman rate so the
   // table stays internally consistent with the market it quotes.
@@ -325,7 +502,7 @@ export async function getLiveRates(env) {
   }
   clearLiveFlags(rates);
 
-  const totalHits = tgjuHits + bonbastHits + nobitexHits + swapHits + geckoHits;
+  const totalHits = tgjuHits + bonbastHits + nobitexHits + swapHits + geckoHits + siteHits;
   if (totalHits > 0) {
     const parts = [];
     if (tgjuHits) parts.push('tgju');
@@ -333,6 +510,7 @@ export async function getLiveRates(env) {
     if (nobitexHits) parts.push('nobitex');
     if (swapHits) parts.push('swapwallet');
     if (geckoHits) parts.push('coingecko');
+    parts.push(...siteParts);
     rates.source = parts.join('+');
     rates.updatedAt = Date.now();
     await putJson(env, 'v2:rates:lastgood', { at: Date.now(), data: rates }, { ttl: 7 * 86400 });
