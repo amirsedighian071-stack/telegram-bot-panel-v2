@@ -74,11 +74,24 @@ export const TGJU_WIDGET_KEYS = [
   'price_gbp', 'price_aed', 'price_try', 'price_cny', 'price_cad', 'price_iqd',
 ];
 
+// Nobitex fails the *entire* stats request when one symbol is not listed (a
+// stray `ton` kept this feed at HTTP 400 and left the Toman crypto table empty),
+// so only symbols the exchange actually lists are asked for in the batch — and
+// the refresh falls back to one request per symbol if even that is rejected.
+export const NOBITEX_PAIRS = ['usdt', 'btc', 'eth', 'trx', 'sol'];
+export const nobitexUrl = (pairs) => `https://apiv2.nobitex.ir/market/stats?srcCurrency=${pairs.join(',')}&dstCurrency=rls`;
+
 export const IRAN_MARKET_SOURCES = {
   tgjuWidget: 'https://api.tgju.org/v1/widget/tmp?keys=' + TGJU_WIDGET_KEYS.join(',') + '&t=1',
-  tgju: ['https://call1.tgju.org/ajax.json', 'https://call2.tgju.org/ajax.json', 'https://call3.tgju.org/ajax.json', 'https://call4.tgju.org/ajax.json', 'https://www.tgju.org/ajax.json'],
-  bonbast: 'https://bonbast.liara.run/json',
-  nobitex: 'https://apiv2.nobitex.ir/market/stats?srcCurrency=usdt,btc,eth,trx,ton,sol&dstCurrency=rls',
+  // The four call* hosts are the ajax board; www.tgju.org/ajax.json answers 404.
+  tgju: ['https://call1.tgju.org/ajax.json', 'https://call2.tgju.org/ajax.json', 'https://call3.tgju.org/ajax.json', 'https://call4.tgju.org/ajax.json'],
+  nobitex: nobitexUrl(NOBITEX_PAIRS),
+  // Bonbast has no free JSON endpoint left (the site answers 405 to a plain GET
+  // and its community mirror `bonbast.liara.run` no longer resolves), so the
+  // slot is a mirror list that can be filled again without touching the
+  // pipeline. Free-market fiat is covered by TGJU, Nobitex's USDT/USD mirror,
+  // the rate-json feed and the world rates.
+  bonbast: [],
   tetherland: 'https://api.tetherland.com/currencies',
   coingecko: 'https://api.coingecko.com/api/v3/simple/price?ids=tether,bitcoin,ethereum,tron,the-open-network,solana,notcoin&vs_currencies=usd&include_24hr_change=true&precision=4',
   kraken: 'https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD,SOLUSD,TRXUSD,TONUSD',
@@ -809,8 +822,27 @@ export async function getLiveRates(env, options = {}) {
       }
       throw new Error(errors[0] || 'tgju_unreachable');
     }, { budget: 13000 }),
-    fetchSource('bonbast', (entry) => fetchJson(IRAN_MARKET_SOURCES.bonbast, 256 * 1024, { entry, timeoutMs: 6000 }), { budget: 13000 }),
-    fetchSource('nobitex', (entry) => fetchJson(IRAN_MARKET_SOURCES.nobitex, 256 * 1024, { entry, timeoutMs: 6000 }), { budget: 13000 }),
+    // Bonbast is only fetched when a mirror is configured; without one the feed
+    // is left out of the report instead of being shown as a permanent failure.
+    ...(IRAN_MARKET_SOURCES.bonbast?.length ? [
+      fetchSource('bonbast', (entry) => Promise.any(IRAN_MARKET_SOURCES.bonbast.map(url => fetchJson(url, 256 * 1024, { entry, timeoutMs: 6000 }))), { budget: 13000 }),
+    ] : []),
+    fetchSource('nobitex', async (entry) => {
+      // One request for every pair this table needs…
+      try {
+        const all = await fetchJson(IRAN_MARKET_SOURCES.nobitex, 256 * 1024, { entry, timeoutMs: 6000 });
+        if (all?.stats && Object.keys(all.stats).length) return all;
+      } catch { /* one rejected symbol must not cost the whole feed */ }
+      // …and if that is rejected, one request per pair: Nobitex answers 400 for
+      // the whole batch when a single symbol is not listed, so a delisted symbol
+      // has to cost one row instead of the feed.
+      const parts = await Promise.all(NOBITEX_PAIRS.map(pair =>
+        fetchJson(nobitexUrl([pair]), 64 * 1024, { entry, relay: false, timeoutMs: 4000 }).catch(() => null)));
+      const stats = {};
+      for (const part of parts) if (part?.stats) Object.assign(stats, part.stats);
+      if (!Object.keys(stats).length) throw new Error('nobitex_unreachable');
+      return { status: 'ok', stats };
+    }, { budget: 13000 }),
     fetchSource('tetherland', (entry) => fetchJson(IRAN_MARKET_SOURCES.tetherland, 128 * 1024, { entry, timeoutMs: 6000 }), { budget: 13000 }),
     fetchSource('swapwallet', (entry) => fetchJson(MARKET_ENDPOINT, 256 * 1024, { entry, timeoutMs: 6000 }), { budget: 13000 }),
     fetchSource('coingecko', (entry) => fetchJson(IRAN_MARKET_SOURCES.coingecko, 256 * 1024, { entry, timeoutMs: 6000 })),

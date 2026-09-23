@@ -410,6 +410,33 @@ test('the panel can ask which rate sources answered', async () => {
   assert.equal(typeof live.data.derived, 'number');
 });
 
+test('a rejected Nobitex batch falls back to one request per symbol', async () => {
+  const urls = [];
+  tg.setOverride((u) => {
+    urls.push(u);
+    if (u.includes('nobitex.ir')) {
+      const asked = /srcCurrency=([^&]+)/.exec(u)?.[1] || '';
+      // The exchange rejects the whole batch when one symbol is not listed.
+      if (asked.includes(',')) return new Response(JSON.stringify({ status: 'failed', code: 'InvalidCurrency' }), { status: 400 });
+      const latest = { usdt: '2304640', btc: '194350582590', eth: '6150937860', trx: '786040', sol: '263033480' }[asked];
+      return { status: 'ok', stats: { [`${asked}-rls`]: { latest, dayLow: latest, dayHigh: latest, dayChange: '1.69' } } };
+    }
+    if (u.includes('tgju.org')) return tgjuPayload();
+    if (u.includes('coingecko')) return {};
+    throw new Error('offline');
+  });
+  const rates = await getLiveRates(marketEnv());
+  assert.ok(urls.some(u => /srcCurrency=[^&]*,/.test(u)), 'the batch request is tried first');
+  assert.ok(urls.filter(u => /srcCurrency=[a-z]+&/.test(u)).length >= 4, 'every pair is then asked for on its own');
+  assert.equal(rates.crypto.usdt.priceToman, 230464);
+  assert.equal(rates.crypto.btc.priceToman, 19435058259);
+  assert.equal(rates.crypto.trx.priceToman, 78604);
+  const nobitex = rates.diagnostics.find(d => d.name === 'nobitex');
+  assert.equal(nobitex.ok, true);
+  assert.equal(nobitex.error, undefined, 'a recovered batch is not reported as a failure');
+  assert.equal(nobitex.hits, 5);
+});
+
 /* ---------- The relay transport ----------
  * A Cloudflare Worker is refused by several Iranian market hosts, so a failed
  * direct fetch is retried through a public read-through relay. The relay is only
