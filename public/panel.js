@@ -41,7 +41,7 @@
       dashboard: 'داشبورد', users: 'کاربران', broadcast: 'ارسال همگانی', menuBuilder: 'منو و دکمه‌ها', settings: 'تنظیمات',
       logout: 'خروج', confirmLogout: 'از پنل خارج می‌شوید؟',
       save: 'ذخیره', saved: 'ذخیره شد', cancel: 'انصراف', close: 'بستن', confirm: 'تایید', remove: 'حذف',
-      saveAllBtn: 'ذخیره همه تغییرات', allSaved: 'تمامی تغییرات ذخیره شدند', unsavedHint: 'تغییرات ذخیره‌نشده دارید', savingAll: 'در حال ذخیره…',
+      saveAllBtn: 'ذخیره همه تغییرات', allSaved: 'تمامی تغییرات ذخیره شدند', unsavedHint: 'تغییرات ذخیره‌نشده دارید', savingAll: 'در حال ذخیره…', saveFailed: 'ذخیره انجام نشد',
       refresh: 'بروزرسانی', loading: 'در حال بارگذاری…', none: '—', send: 'ارسال', sending: 'در حال ارسال…',
       errorGeneric: 'خطایی رخ داد', copy: 'کپی', copied: 'کپی شد',
       liveStatus: 'وضعیت لحظه‌ای ورکر', operational: 'فعال', offline: 'قطع', latency: 'تأخیر',
@@ -140,7 +140,7 @@
       dashboard: 'Dashboard', users: 'Users', broadcast: 'Broadcast', menuBuilder: 'Menus & Buttons', settings: 'Settings',
       logout: 'Log out', confirmLogout: 'Log out of the panel?',
       save: 'Save', saved: 'Saved', cancel: 'Cancel', close: 'Close', confirm: 'Confirm', remove: 'Remove',
-      saveAllBtn: 'Save all changes', allSaved: 'All changes saved', unsavedHint: 'You have unsaved changes', savingAll: 'Saving…',
+      saveAllBtn: 'Save all changes', allSaved: 'All changes saved', unsavedHint: 'You have unsaved changes', savingAll: 'Saving…', saveFailed: 'Save failed',
       refresh: 'Refresh', loading: 'Loading…', none: '—', send: 'Send', sending: 'Sending…',
       errorGeneric: 'Something went wrong', copy: 'Copy', copied: 'Copied',
       liveStatus: 'Worker live status', operational: 'Operational', offline: 'Offline', latency: 'Latency',
@@ -209,6 +209,7 @@
     timers: [],
     live: { state: 'unknown', ms: null, colo: null, at: null },
     saveBar: 'idle',
+    saveBarError: '',
     savingAll: false,
   };
   const ROUTES = ['dashboard', 'studio', 'users', 'broadcast', 'support', 'menu', 'settings'];
@@ -383,9 +384,9 @@
 
   let _lastToast = null;
   function toast(msg, type = 'info') {
-    // Save-all runs every section action back-to-back; their individual success
-    // notices must not stack. Only the single "all saved" message remains.
-    if (S.savingAll && type === 'success') return;
+    // Save-all runs every section action back-to-back and single saves report
+    // inside the save bar; those success notices must not stack as toasts.
+    if (type === 'success' && (S.savingAll || S.saveBar === 'saving')) return;
     const now = Date.now();
     // Identical back-to-back toasts (double taps, retried saves) collapse into one.
     if (_lastToast && _lastToast.msg === msg && _lastToast.type === type && now - _lastToast.at < 1500) {
@@ -2209,69 +2210,129 @@
   function syncMenuSafe() { try { syncMenuDom(); } catch (e) {} }
 
   // ===== Bottom save-bar: one button that persists every saveable section of the
-  // current route, with an inline "all changes saved" confirmation.
+  // current route. Every save result is reported inside the bar itself, next to the
+  // button: green for "saved" / "all changes saved", red when a save failed.
   const SAVE_ACT_RE = /^(save[A-Z]|vSave|sv[A-Za-z]*Save)/;
   const SAVE_ALL_EXCLUDE = ['vSavePurpose']; // structural action guarded by a confirm dialog
+  const SAVE_MSG_CLS = {
+    idle: 'text-slate-500 dark:text-slate-400',
+    dirty: 'text-amber-600 dark:text-amber-400',
+    saving: 'text-brand-600 dark:text-brand-400',
+    saved: 'text-emerald-600 dark:text-emerald-400',
+    savedAll: 'text-emerald-600 dark:text-emerald-400',
+    error: 'text-rose-600 dark:text-rose-400',
+  };
+  const SAVE_MSG_ICON = { dirty: 'circle-dot', saving: 'loader-2', saved: 'check-circle-2', savedAll: 'check-circle-2', error: 'alert-circle' };
   function saveAllActions() {
     const view = $('view');
     if (!view || !S.token || S.mustChangePassword) return [];
     const acts = [];
     view.querySelectorAll('[data-act]').forEach((el) => {
       const a = el.getAttribute('data-act') || '';
-      if (SAVE_ALL_EXCLUDE.includes(a) || acts.includes(a) || el.disabled) return;
+      // A button disabled by the in-flight busy lock still counts: the route's
+      // save actions must be discoverable while one of them is saving.
+      if (SAVE_ALL_EXCLUDE.includes(a) || acts.includes(a) || (el.disabled && !el.dataset.busy)) return;
       if (SAVE_ACT_RE.test(a) && typeof ACTIONS[a] === 'function') acts.push(a);
     });
     return acts;
+  }
+  // Renders the bar for the current state; called after every state change.
+  function paintSaveBar() {
+    const bar = $('save-bar');
+    const m = $('save-bar-msg');
+    if (!bar || !m) return;
+    const state = S.saveBar;
+    const text = state === 'saved' ? t('saved')
+      : state === 'savedAll' ? t('allSaved')
+      : state === 'dirty' ? t('unsavedHint')
+      : state === 'saving' ? t('savingAll')
+      : state === 'error' ? (S.saveBarError || t('saveFailed'))
+      : '';
+    m.className = 'flex-1 min-w-0 text-xs font-semibold leading-5 ' + (SAVE_MSG_CLS[state] || SAVE_MSG_CLS.idle);
+    const icon = SAVE_MSG_ICON[state];
+    m.innerHTML = text
+      ? (icon ? '<i data-lucide="' + icon + '" class="' + (state === 'saving' ? 'animate-spin' : '') + '"></i>' : '') +
+        '<span class="min-w-0">' + esc(text) + '</span>'
+      : '';
+    bar.classList.toggle('bp-ok', state === 'saved' || state === 'savedAll');
+    bar.classList.toggle('bp-err', state === 'error');
+    if (icon) refreshIcons();
+  }
+  let saveBarTimer = null;
+  function saveBarClearTimer() { clearTimeout(saveBarTimer); saveBarTimer = null; }
+  function saveBarAutoIdle(ms) {
+    saveBarClearTimer();
+    saveBarTimer = setTimeout(() => {
+      if (S.saveBar === 'saved' || S.saveBar === 'savedAll') { S.saveBar = 'idle'; paintSaveBar(); }
+    }, ms);
   }
   function updateSaveBar() {
     const bar = $('save-bar');
     if (!bar) return;
     const acts = saveAllActions();
     bar.classList.toggle('hidden', acts.length === 0);
+    document.body.classList.toggle('bp-savebar-open', acts.length > 0);
     const lbl = $('save-bar-btn-label');
     if (lbl) lbl.textContent = t('saveAllBtn');
-    const m = $('save-bar-msg');
-    if (!acts.length) { S.saveBar = 'idle'; if (m) m.textContent = ''; return; }
-    if (m) m.textContent = S.saveBar === 'saved' ? t('allSaved') : S.saveBar === 'dirty' ? t('unsavedHint') : '';
+    if (!acts.length) { S.saveBar = 'idle'; S.saveBarError = ''; }
+    paintSaveBar();
   }
   function saveBarDirty() {
     if (!saveAllActions().length) return;
-    if (S.saveBar === 'saved') clearTimeout(saveBarSaved.timer);
+    saveBarClearTimer();
     S.saveBar = 'dirty';
-    const m = $('save-bar-msg');
-    if (m) m.textContent = t('unsavedHint');
+    S.saveBarError = '';
+    paintSaveBar();
   }
+  // A single section saved successfully: green "saved" inside the bar.
+  function saveBarSectionSaved() {
+    if (!saveAllActions().length || S.savingAll) return;
+    S.saveBar = 'saved';
+    S.saveBarError = '';
+    paintSaveBar();
+    saveBarAutoIdle(5000);
+  }
+  // "Save all changes" finished: green "all changes saved".
   function saveBarSaved() {
     if (!saveAllActions().length) return;
-    S.saveBar = 'saved';
-    const m = $('save-bar-msg');
-    if (m) m.textContent = t('allSaved');
-    clearTimeout(saveBarSaved.timer);
-    saveBarSaved.timer = setTimeout(() => { S.saveBar = 'idle'; updateSaveBar(); }, 4000);
+    S.saveBar = 'savedAll';
+    S.saveBarError = '';
+    paintSaveBar();
+    saveBarAutoIdle(6000);
   }
-  // A single-section save reports its own toast; the bar resets silently so no
-  // second "all saved" message appears.
+  // A save failed: the bar says so in red and keeps saying it until the next edit.
+  function saveBarError(message) {
+    if (!saveAllActions().length) return;
+    saveBarClearTimer();
+    S.saveBar = 'error';
+    S.saveBarError = message ? String(message) : '';
+    paintSaveBar();
+  }
+  // Kept for callers that only want to drop the previous result.
   function saveBarReset() {
     if (!saveAllActions().length) return;
+    saveBarClearTimer();
     S.saveBar = 'idle';
-    clearTimeout(saveBarSaved.timer);
-    const m = $('save-bar-msg');
-    if (m) m.textContent = '';
+    S.saveBarError = '';
+    paintSaveBar();
   }
   ACTIONS.saveAll = async () => {
     const acts = saveAllActions();
     if (!acts.length) return;
     const btn = $('save-bar-btn');
     if (btn) btn.disabled = true;
-    const m = $('save-bar-msg');
-    if (m) m.textContent = t('savingAll');
+    saveBarClearTimer();
+    S.saveBar = 'saving';
+    S.saveBarError = '';
+    paintSaveBar();
     S.savingAll = true;
     try {
       for (const a of acts) await ACTIONS[a]({}, null);
       saveBarSaved();
     } catch (e) {
-      if (m) m.textContent = t('unsavedHint');
-      toast(typeof vError === 'function' ? vError(e.message) : e.message, 'error');
+      const msg = typeof vError === 'function' ? vError(e.message) : e.message;
+      saveBarError(msg);
+      toast(msg, 'error');
     } finally {
       S.savingAll = false;
       if (btn && btn.isConnected) btn.disabled = false;
@@ -2320,19 +2381,32 @@
     const fn = ACTIONS[act];
     if (fn && !el.disabled && !el.dataset.busy) {
       e.preventDefault();
+      // The bar switches to "saving…" before the action runs so the action's own
+      // success toast can be suppressed in favour of the in-bar message.
+      const isSave = act !== 'saveAll' && SAVE_ACT_RE.test(act);
       let ret;
-      try { ret = fn(el.dataset, el); } catch (err) { toast(typeof vError === 'function' ? vError(err.message) : err.message, 'error'); return; }
+      if (isSave && !S.savingAll) { saveBarClearTimer(); S.saveBar = 'saving'; S.saveBarError = ''; paintSaveBar(); }
+      try { ret = fn(el.dataset, el); } catch (err) {
+        const msg = typeof vError === 'function' ? vError(err.message) : err.message;
+        if (isSave) saveBarError(msg);
+        toast(msg, 'error');
+        return;
+      }
       if (ret && typeof ret.then === 'function') {
         // Async action: hold a busy lock on the button so a double-tap cannot
         // run it twice; the lock releases only after the promise settles.
         el.dataset.busy = '1';
         el.disabled = true;
         Promise.resolve(ret)
-          .then(() => { if (act !== 'saveAll' && SAVE_ACT_RE.test(act)) saveBarReset(); })
-          .catch(err => toast(typeof vError === 'function' ? vError(err.message) : err.message, 'error'))
+          .then(() => { if (isSave) saveBarSectionSaved(); })
+          .catch(err => {
+            const msg = typeof vError === 'function' ? vError(err.message) : err.message;
+            if (isSave) saveBarError(msg);
+            toast(msg, 'error');
+          })
           .finally(() => { delete el.dataset.busy; if (el.isConnected) el.disabled = false; });
       } else if (act !== 'saveAll' && SAVE_ACT_RE.test(act)) {
-        saveBarReset();
+        saveBarSectionSaved();
       }
     }
   });
